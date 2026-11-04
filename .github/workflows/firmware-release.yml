@@ -45,7 +45,7 @@ jobs:
           import hashlib, json, os
           from pathlib import Path
           version=Path('firmware/version.txt').read_text().strip()
-          binary=Path('dist/firmware/build/tactile.bin')
+          binary=Path('dist/tactile.bin')
           obj={
             "version": version,
             "url": "https://github.com/"+os.environ["GITHUB_REPOSITORY"]+"/releases/download/v"+version+"/tactile.bin",
@@ -59,6 +59,6 @@ jobs:
         shell: bash
         run: |
           gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes \
-            dist/firmware/build/tactile.bin dist/latest.json \
-            dist/firmware/build/bootloader/bootloader.bin \
-            dist/firmware/build/partition_table/partition-table.bin
+            dist/tactile.bin dist/latest.json \
+            dist/bootloader/bootloader.bin \
+            dist/partition_table/partition-table.bin
