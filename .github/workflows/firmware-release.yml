@@ -1,0 +1,64 @@
+name: Firmware release
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: espressif/idf:release-v5.3
+    steps:
+      - uses: actions/checkout@v4
+      - name: Match tag and firmware version, build image
+        working-directory: firmware
+        shell: bash
+        run: |
+          . /opt/esp/idf/export.sh
+          test "v$(cat version.txt)" = "$GITHUB_REF_NAME"
+          idf.py build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firmware-release-artifacts
+          if-no-files-found: error
+          path: |
+            firmware/build/tactile.bin
+            firmware/build/bootloader/bootloader.bin
+            firmware/build/partition_table/partition-table.bin
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: firmware-release-artifacts
+          path: dist
+      - name: Create manifest
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          version=Path('firmware/version.txt').read_text().strip()
+          binary=Path('dist/firmware/build/tactile.bin')
+          obj={
+            "version": version,
+            "url": "https://github.com/"+os.environ["GITHUB_REPOSITORY"]+"/releases/download/v"+version+"/tactile.bin",
+            "sha256": hashlib.sha256(binary.read_bytes()).hexdigest()
+          }
+          Path('dist/latest.json').write_text(json.dumps(obj, indent=2)+"\n")
+          PY
+      - name: Publish stable release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes \
+            dist/firmware/build/tactile.bin dist/latest.json \
+            dist/firmware/build/bootloader/bootloader.bin \
+            dist/firmware/build/partition_table/partition-table.bin
