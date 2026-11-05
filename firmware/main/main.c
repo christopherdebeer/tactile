@@ -16,7 +16,7 @@
 #include "freertos/task.h"
 
 #include "driver/gpio.h"
-#include "driver/i2c.h"
+#include "driver/i2c_master.h"
 #include "esp_app_desc.h"
 #include "esp_crt_bundle.h"
 #include "esp_event.h"
@@ -34,6 +34,7 @@
 #include "cJSON.h"
 
 #include "board.h"
+#include "display.h"
 
 #define MANIFEST_URL "https://github.com/christopherdebeer/tactile/releases/latest/download/latest.json"
 #define RELEASE_BIN_PREFIX "https://github.com/christopherdebeer/tactile/releases/download/"
@@ -46,6 +47,7 @@ static volatile bool ota_check_requested = false;
 static volatile uint32_t button_count = 0;
 static bool bmi270_found = false;
 static char device_role[32] = "unassigned";
+static i2c_master_bus_handle_t internal_i2c_bus;
 
 static esp_err_t save_setting(const char *name, const char *value) {
     nvs_handle_t h;
@@ -67,24 +69,33 @@ static bool read_setting(const char *name, char *dest, size_t capacity) {
 }
 
 static bool probe_bmi270(void) {
-    i2c_config_t config = {
-        .mode = I2C_MODE_MASTER,
+    i2c_master_bus_config_t config = {
+        .i2c_port = TACTILE_INTERNAL_I2C_PORT,
         .sda_io_num = TACTILE_SYS_SDA,
         .scl_io_num = TACTILE_SYS_SCL,
-        .sda_pullup_en = GPIO_PULLUP_ENABLE,
-        .scl_pullup_en = GPIO_PULLUP_ENABLE,
-        .master.clk_speed = 100000
+        .clk_source = I2C_CLK_SRC_DEFAULT,
+        .glitch_ignore_cnt = 7,
+        .flags.enable_internal_pullup = true,
     };
-    esp_err_t err = i2c_param_config(I2C_NUM_0, &config);
-    if (err == ESP_OK) err = i2c_driver_install(I2C_NUM_0, I2C_MODE_MASTER, 0, 0, 0);
+    esp_err_t err = i2c_new_master_bus(&config, &internal_i2c_bus);
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "Internal I2C init: %s", esp_err_to_name(err));
         return false;
     }
+    i2c_device_config_t device = {
+        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+        .device_address = TACTILE_BMI270_ADDR,
+        .scl_speed_hz = 400000,
+    };
+    i2c_master_dev_handle_t bmi270;
+    err = i2c_master_bus_add_device(internal_i2c_bus, &device, &bmi270);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "BMI270 I2C attach: %s", esp_err_to_name(err));
+        return false;
+    }
     uint8_t reg = 0x00;
     uint8_t chip = 0;
-    err = i2c_master_write_read_device(I2C_NUM_0, TACTILE_BMI270_ADDR,
-                                       &reg, 1, &chip, 1, pdMS_TO_TICKS(150));
+    err = i2c_master_transmit_receive(bmi270, &reg, 1, &chip, 1, 150);
     ESP_LOGI(TAG, "BMI270 probe: %s; chip_id=0x%02x (expected 0x24)",
              esp_err_to_name(err), chip);
     return err == ESP_OK && chip == TACTILE_BMI270_CHIP_ID;
@@ -101,6 +112,8 @@ static void on_wifi_event(void *ctx, esp_event_base_t base, int32_t id, void *da
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         wifi_online = true;
         ESP_LOGI(TAG, "Wi-Fi online, OTA polling available");
+        tactile_display_update(device_role, esp_app_get_description()->version,
+                               bmi270_found, wifi_online, button_count);
     }
 }
 
@@ -269,6 +282,8 @@ static void button_loop(void *context) {
             ++button_count;
             last_press_us = us;
             ESP_LOGI(TAG, "Button press #%" PRIu32 " at %" PRId64 " us", button_count, us);
+            tactile_display_update(device_role, esp_app_get_description()->version,
+                                   bmi270_found, wifi_online, button_count);
         }
         last = now;
         vTaskDelay(pdMS_TO_TICKS(20));
@@ -289,26 +304,32 @@ static void validate_trial_after_stable_boot(void) {
 static void console_loop(void *context) {
     (void)context;
     char line[180];
+    bool prompt_visible = false;
     setvbuf(stdin, NULL, _IONBF, 0);
     puts("Tactile P0 USB console. Type help.");
     while (true) {
-        fputs("tactile> ", stdout);
-        fflush(stdout);
+        if (!prompt_visible) {
+            fputs("tactile> ", stdout);
+            fflush(stdout);
+            prompt_visible = true;
+        }
         if (!fgets(line, sizeof(line), stdin)) {
             clearerr(stdin);
             vTaskDelay(pdMS_TO_TICKS(100));
             continue;
         }
+        prompt_visible = false;
         line[strcspn(line, "\r\n")] = 0;
         if (!strcmp(line, "help")) {
             puts("help | status | role <name> | wifi <ssid> <password> | clearwifi | ota | reboot");
         } else if (!strcmp(line, "status")) {
             uint8_t mac[6] = {0};
             esp_read_mac(mac, ESP_MAC_WIFI_STA);
-            printf("version=%s role=%s id=%02x%02x%02x wifi=%s BMI270_probe=%s button_count=%" PRIu32 "\n",
+            printf("version=%s role=%s id=%02x%02x%02x wifi=%s BMI270_probe=%s display=%s button_count=%" PRIu32 "\n",
                    esp_app_get_description()->version, device_role,
                    mac[3], mac[4], mac[5], wifi_online ? "online" : "offline",
-                   bmi270_found ? "ok" : "failed", button_count);
+                   bmi270_found ? "ok" : "failed",
+                   tactile_display_ready() ? "ok" : "failed", button_count);
         } else if (!strcmp(line, "ota")) {
             ota_check_requested = true;
             puts("OTA check queued (requires Wi-Fi and published stable release).");
@@ -325,6 +346,8 @@ static void console_loop(void *context) {
             if (role[0] && strlen(role) < sizeof(device_role) &&
                 save_setting("role", role) == ESP_OK) {
                 strcpy(device_role, role);
+                tactile_display_update(device_role, esp_app_get_description()->version,
+                                       bmi270_found, wifi_online, button_count);
                 puts("Role saved.");
             } else puts("Role must be 1–31 characters.");
         } else if (!strncmp(line, "wifi ", 5)) {
@@ -357,6 +380,10 @@ void app_main(void) {
     read_setting("role", device_role, sizeof(device_role));
     ESP_LOGI(TAG, "Boot firmware %s / role %s", esp_app_get_description()->version, device_role);
     bmi270_found = probe_bmi270(); /* Probe only; BMI270 driver in P1. */
+    if (!tactile_display_init(device_role, esp_app_get_description()->version,
+                              bmi270_found, wifi_online, button_count)) {
+        ESP_LOGE(TAG, "Display initialization failed");
+    }
     xTaskCreate(button_loop, "button", 3072, NULL, 5, NULL);
     xTaskCreate(console_loop, "console", 6144, NULL, 3, NULL);
     start_wifi();

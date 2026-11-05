@@ -1,12 +1,12 @@
 # AtomS3R hardware references
 
-Two M5Stack AtomS3Rs delivered on 2026-11-04. No device has been flashed by this project.
+Two M5Stack AtomS3Rs delivered on 2026-11-04. The first device was flashed on 2026-11-05 and assigned `pebble-01`; USB, PSRAM, BMI270 probing and its LCD status screen passed initial hardware checks.
 
 Authoritative pins: https://docs.m5stack.com/en/core/AtomS3R
 
 | Signal | Board pin | Notes |
 | --- | --- | --- |
-| SYS I2C clock | GPIO0 | BMI270 and LP5562 shared bus |
+| SYS I2C clock | GPIO0 | BMI270 and LP5562 shared bus, I2C controller 1 |
 | SYS I2C data | GPIO45 | BMI270 at 0x68, chip ID 0x24 |
 | User button | GPIO41 | Under LCD; active low |
 | BMM150 | BMI270 auxiliary I2C | Not a standalone SYS I2C address |
@@ -15,6 +15,6 @@ Authoritative pins: https://docs.m5stack.com/en/core/AtomS3R
 | Grove red | **5V** | Never use directly for 3.3V-only Trill |
 | USB-C | Native USB Serial/JTAG | First flash, debug, recovery |
 
-The LCD is 128x128; newer revisions use ST7735 (older examples may use GC9107). The display is deliberately deferred until board-specific initialization is confirmed.
+The LCD is 128x128 and shipped AtomS3R batches may contain either ST7735S or GC9107 controllers. Firmware uses M5GFX runtime detection, with SPI clock GPIO15, MOSI GPIO21, CS GPIO14, DC GPIO42 and reset GPIO48. The LP5562 backlight controller is at internal I²C address 0x30.
 
 AtomS3R includes neither a LiPo battery nor a LiPo charge circuit. Prototype on USB before choosing a compatible battery base. Keep magnetic haptic actuators away from the BMM150 or characterize their interference.

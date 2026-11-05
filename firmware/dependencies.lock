@@ -1,0 +1,18 @@
+dependencies:
+  idf:
+    source:
+      type: idf
+    version: 5.3.5
+  m5gfx:
+    component_hash: 02b7d80b30dedf8069f6a59bbddc818ead081e57d8591e9c7c45558231ecd946
+    dependencies: []
+    source:
+      git: https://github.com/m5stack/M5GFX.git
+      path: .
+      type: git
+    version: 28d47949bdc84f30881623476f555398e2194313
+direct_dependencies:
+- m5gfx
+manifest_hash: 1da8825222c75841fe359c79309c583b3d57591960bd3a5300a96831a29e3306
+target: esp32s3
+version: 2.0.0

@@ -1,10 +1,10 @@
 # Firmware — AtomS3R
 
-**P0 is committed source, not yet hardware-tested.** It supports the native USB console, BMI270 chip-ID probe, button count, Wi-Fi configuration in NVS and automatic stable HTTPS OTA with an A/B rollback-capable partition table. The display, sensor streaming, BLE HID, capacitive Trill, pressure and haptics are deliberately not implemented yet.
+**P0 has been flashed and boot-tested on an AtomS3R.** It supports the native USB console, BMI270 chip-ID probe, LCD status screen, button count, Wi-Fi configuration in NVS and automatic stable HTTPS OTA with an A/B rollback-capable partition table. Sensor streaming, BLE HID, capacitive Trill, pressure and haptics are not implemented yet.
 
 ## Build and first USB flash
 
-Tested source target: **ESP-IDF v5.3**, not yet verified against actual hardware.
+Tested with **ESP-IDF v5.3** on an AtomS3R with 8MB flash and 8MB octal PSRAM.
 
     mkdir -p ~/esp && cd ~/esp
     git clone -b release/v5.3 --recursive https://github.com/espressif/esp-idf.git
@@ -51,6 +51,6 @@ Keep USB and ROM download access exposed in early enclosures. The AtomS3R can en
 ## Caveats
 
 - P0 only reads the BMI270 ID register; Bosch sensor configuration data and high-rate BMI270/BMM150 streaming are P1.
-- The AtomS3R's display controller revision must be checked before LCD initialization. P0 runs without it.
+- M5GFX probes the AtomS3R display controller at startup and supports both shipped ST7735S and GC9107 variants.
 - The AtomS3R does not include a LiPo charger. Use USB until a compatible power accessory is verified.
 - Do not reuse Mochi's Waveshare board-specific pin definitions.
