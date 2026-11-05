@@ -9,10 +9,13 @@
 - **Nothing is considered hardware-validated until these steps have actually run.**
 
 ## P1 — Raw 9-axis telemetry and reproducibility
-- Bosch BMI270 initialization/configuration plus BMM150 auxiliary sensor hub.
-- Monotonic sample timestamps (target 50-100Hz), sequence numbers, missing-sample accounting.
+- [x] Bosch BMI270 initialization/configuration plus BMM150 auxiliary sensor hub
+  validated on `pebble-01`.
+- [x] Monotonic sample timestamps at 100Hz, sequence numbers and missing-sample
+  accounting validated on a stationary live stream.
 - Record rest, wrist reposition, deliberate roll, flick, grip and button clutch.
-- Deterministic replay must reproduce interpretation state transitions.
+- [x] Raw JSONL recorder and deterministic reference button-clutch replay.
+- [ ] Run and retain the full labelled physical-motion session set.
 
 ## P2 — Standard BLE HID
 - Pair to a computer as a conventional HID mouse/keyboard with no host app.

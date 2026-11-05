@@ -1,6 +1,9 @@
 # AtomS3R hardware references
 
-Two M5Stack AtomS3Rs delivered on 2026-11-04. The first device was flashed on 2026-11-05 and assigned `pebble-01`; USB, PSRAM, BMI270 probing and its LCD status screen passed initial hardware checks.
+Two M5Stack AtomS3Rs delivered on 2026-11-04. The first device was flashed on
+2026-11-05 and assigned `pebble-01`; USB, PSRAM, BMI270 configuration, BMM150
+auxiliary acquisition, 100Hz telemetry and its LCD status screen passed
+hardware checks.
 
 Authoritative pins: https://docs.m5stack.com/en/core/AtomS3R
 

@@ -3,6 +3,8 @@
 .env.*
 !.env.example
 *.log
+*.pyc
+__pycache__/
 firmware/build/
 firmware/sdkconfig
 firmware/sdkconfig.old

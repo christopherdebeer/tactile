@@ -3,7 +3,7 @@
  * INTERNAL SYS I2C: SCL=GPIO0, SDA=GPIO45 (BMI270 @ 0x68 + LP5562)
  * SCREEN BUTTON: GPIO41 (active low)
  * EXTERNAL GROVE: G1 white, G2 yellow, red 5V (NOT 3.3V)
- * LCD hardware revisions vary: intentionally not initialized in P0.
+ * LCD hardware revisions vary; M5GFX performs the panel probe.
  */
 #define TACTILE_SYS_SCL 0
 #define TACTILE_SYS_SDA 45

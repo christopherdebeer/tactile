@@ -20,8 +20,11 @@ Management (device identity, Wi-Fi, OTA, rollback, configuration) is separate fr
 
 Independent capacitive textile patches can map contact distributions but cannot guarantee finger identity at merged contacts. Touch capacitance alone is not calibrated force. Pressure uses separate sensing. Keep ball/pebble form an open experimental choice.
 
-## Planned protocol
+## Observation protocol
 
-schema_version, device_id, firmware_version, seq, mono_us, accel_xyz, gyro_xyz, mag_xyz?, button, cap_raw[N]?, force_raw[M]?, flags.
-
-P0 only probes BMI270 chip ID and does not implement this telemetry yet. P1 must make this contract explicit before any trained inference.
+P1 implements the explicit JSONL observation contract in
+`protocol/telemetry.md`: identity and firmware envelope, sequence and monotonic
+time, SI-unit 9-axis data, button state, future sensor vectors and quality
+flags. Raw capture is immutable. Derived button-clutch transitions live in a
+separate versioned stream, establishing the deterministic replay boundary
+before trained inference.

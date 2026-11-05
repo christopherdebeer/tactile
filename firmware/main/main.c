@@ -1,12 +1,12 @@
 /*
- * Tactile P0 — native ESP-IDF firmware for M5Stack AtomS3R.
+ * Tactile P1 — native ESP-IDF firmware for M5Stack AtomS3R.
  *
- * Recoverable foundation only: BMI270 chip-ID probe, button events,
- * serial provisioning, stable-release HTTPS OTA with A/B rollback.
- * NOT a full sensor driver, BLE HID device, LCD renderer or haptic system.
+ * Recoverable P0 foundation plus timestamped BMI270/BMM150 observations over
+ * a transport-neutral newline-delimited JSON stream.
  */
 #include <stdbool.h>
 #include <stdint.h>
+#include <ctype.h>
 #include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -35,6 +35,7 @@
 
 #include "board.h"
 #include "display.h"
+#include "sensors.h"
 
 #define MANIFEST_URL "https://github.com/christopherdebeer/tactile/releases/latest/download/latest.json"
 #define RELEASE_BIN_PREFIX "https://github.com/christopherdebeer/tactile/releases/download/"
@@ -44,10 +45,15 @@
 static const char *TAG = "tactile";
 static volatile bool wifi_online = false;
 static volatile bool ota_check_requested = false;
+static volatile bool telemetry_enabled = false;
+static volatile bool button_down = false;
 static volatile uint32_t button_count = 0;
+static volatile uint32_t telemetry_sequence = 0;
+static volatile uint32_t telemetry_dropped = 0;
+static volatile uint32_t telemetry_emitted = 0;
 static bool bmi270_found = false;
 static char device_role[32] = "unassigned";
-static i2c_master_bus_handle_t internal_i2c_bus;
+static char device_id[7] = "000000";
 
 static esp_err_t save_setting(const char *name, const char *value) {
     nvs_handle_t h;
@@ -66,39 +72,6 @@ static bool read_setting(const char *name, char *dest, size_t capacity) {
     esp_err_t err = nvs_get_str(h, name, dest, &len);
     nvs_close(h);
     return err == ESP_OK && len > 1;
-}
-
-static bool probe_bmi270(void) {
-    i2c_master_bus_config_t config = {
-        .i2c_port = TACTILE_INTERNAL_I2C_PORT,
-        .sda_io_num = TACTILE_SYS_SDA,
-        .scl_io_num = TACTILE_SYS_SCL,
-        .clk_source = I2C_CLK_SRC_DEFAULT,
-        .glitch_ignore_cnt = 7,
-        .flags.enable_internal_pullup = true,
-    };
-    esp_err_t err = i2c_new_master_bus(&config, &internal_i2c_bus);
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "Internal I2C init: %s", esp_err_to_name(err));
-        return false;
-    }
-    i2c_device_config_t device = {
-        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
-        .device_address = TACTILE_BMI270_ADDR,
-        .scl_speed_hz = 400000,
-    };
-    i2c_master_dev_handle_t bmi270;
-    err = i2c_master_bus_add_device(internal_i2c_bus, &device, &bmi270);
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "BMI270 I2C attach: %s", esp_err_to_name(err));
-        return false;
-    }
-    uint8_t reg = 0x00;
-    uint8_t chip = 0;
-    err = i2c_master_transmit_receive(bmi270, &reg, 1, &chip, 1, 150);
-    ESP_LOGI(TAG, "BMI270 probe: %s; chip_id=0x%02x (expected 0x24)",
-             esp_err_to_name(err), chip);
-    return err == ESP_OK && chip == TACTILE_BMI270_CHIP_ID;
 }
 
 static void on_wifi_event(void *ctx, esp_event_base_t base, int32_t id, void *data) {
@@ -124,7 +97,7 @@ static void start_wifi(void) {
         ESP_LOGI(TAG, "No Wi-Fi credentials. Set via serial: wifi <SSID> <PASSWORD>");
         return;
     }
-    read_setting("pass", pass, sizeof(pass));
+    read_setting("password", pass, sizeof(pass));
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     esp_netif_create_default_wifi_sta();
@@ -277,6 +250,7 @@ static void button_loop(void *context) {
     int64_t last_press_us = 0;
     while (true) {
         int now = gpio_get_level((gpio_num_t)TACTILE_BUTTON);
+        button_down = now == 0;
         int64_t us = esp_timer_get_time();
         if (last && !now && us - last_press_us > 150000) {
             ++button_count;
@@ -287,6 +261,89 @@ static void button_loop(void *context) {
         }
         last = now;
         vTaskDelay(pdMS_TO_TICKS(20));
+    }
+}
+
+static void sensor_loop(void *context) {
+    (void)context;
+    const TickType_t period = pdMS_TO_TICKS(10);
+    TickType_t wake = xTaskGetTickCount();
+    uint32_t sequence = 0;
+    uint32_t last_emitted = UINT32_MAX;
+    int64_t previous_timestamp = 0;
+    bool was_enabled = false;
+
+    while (true) {
+        vTaskDelayUntil(&wake, period);
+        tactile_sensor_sample_t sample = {0};
+        bool valid = tactile_sensors_sample(&sample);
+        int64_t timestamp = esp_timer_get_time();
+        bool enabled = telemetry_enabled;
+
+        uint32_t deadline_misses = 0;
+        if (previous_timestamp != 0) {
+            int64_t elapsed = timestamp - previous_timestamp;
+            if (elapsed > 15000) {
+                deadline_misses = (uint32_t)((elapsed + 5000) / 10000) - 1;
+                sequence += deadline_misses;
+                telemetry_dropped += deadline_misses;
+            }
+        }
+        previous_timestamp = timestamp;
+
+        if (!enabled) {
+            last_emitted = UINT32_MAX;
+        } else if (!was_enabled) {
+            last_emitted = UINT32_MAX;
+        }
+        was_enabled = enabled;
+
+        if (!valid) {
+            ++telemetry_dropped;
+            ++sequence;
+            telemetry_sequence = sequence;
+            continue;
+        }
+        if (deadline_misses) {
+            sample.quality_flags |= TACTILE_QUALITY_DEADLINE_MISSED;
+        }
+
+        if (enabled) {
+            uint32_t dropped =
+                last_emitted == UINT32_MAX ? 0 : sequence - last_emitted - 1;
+            char magnetic[96];
+            if (sample.quality_flags & TACTILE_QUALITY_MAG_VALID) {
+                snprintf(magnetic, sizeof(magnetic), "[%.6f,%.6f,%.6f]",
+                         sample.magnetic_field_ut[0],
+                         sample.magnetic_field_ut[1],
+                         sample.magnetic_field_ut[2]);
+            } else {
+                strcpy(magnetic, "null");
+            }
+            printf(
+                "{\"schema_version\":1,\"type\":\"observation\","
+                "\"device_id\":\"%s\",\"role\":\"%s\","
+                "\"firmware_version\":\"%s\",\"sequence\":%" PRIu32 ","
+                "\"monotonic_us\":%" PRId64 ",\"dropped\":%" PRIu32 ","
+                "\"acceleration_mps2\":[%.6f,%.6f,%.6f],"
+                "\"angular_velocity_rps\":[%.6f,%.6f,%.6f],"
+                "\"magnetic_field_ut\":%s,"
+                "\"button\":%s,\"capacitance\":[],\"pressure\":[],"
+                "\"quality_flags\":%u}\n",
+                device_id, device_role, esp_app_get_description()->version,
+                sequence, timestamp, dropped,
+                sample.acceleration_mps2[0], sample.acceleration_mps2[1],
+                sample.acceleration_mps2[2],
+                sample.angular_velocity_rps[0],
+                sample.angular_velocity_rps[1],
+                sample.angular_velocity_rps[2],
+                magnetic,
+                button_down ? "true" : "false", sample.quality_flags);
+            last_emitted = sequence;
+            ++telemetry_emitted;
+        }
+        ++sequence;
+        telemetry_sequence = sequence;
     }
 }
 
@@ -301,12 +358,37 @@ static void validate_trial_after_stable_boot(void) {
     }
 }
 
+static bool valid_token(const char *value, size_t max_length) {
+    size_t length = strlen(value);
+    if (length == 0 || length > max_length) {
+        return false;
+    }
+    for (size_t i = 0; i < length; ++i) {
+        unsigned char c = (unsigned char)value[i];
+        if (!isalnum(c) && c != '-' && c != '_' && c != '.') {
+            return false;
+        }
+    }
+    return true;
+}
+
+static void emit_marker(const char *label) {
+    printf(
+        "{\"schema_version\":1,\"type\":\"marker\","
+        "\"device_id\":\"%s\",\"role\":\"%s\","
+        "\"firmware_version\":\"%s\",\"sequence\":%" PRIu32 ","
+        "\"monotonic_us\":%" PRId64 ",\"provenance\":\"usb-console\","
+        "\"label\":\"%s\"}\n",
+        device_id, device_role, esp_app_get_description()->version,
+        telemetry_sequence, esp_timer_get_time(), label);
+}
+
 static void console_loop(void *context) {
     (void)context;
     char line[180];
     bool prompt_visible = false;
     setvbuf(stdin, NULL, _IONBF, 0);
-    puts("Tactile P0 USB console. Type help.");
+    puts("Tactile P1 USB console. Type help.");
     while (true) {
         if (!prompt_visible) {
             fputs("tactile> ", stdout);
@@ -321,15 +403,30 @@ static void console_loop(void *context) {
         prompt_visible = false;
         line[strcspn(line, "\r\n")] = 0;
         if (!strcmp(line, "help")) {
-            puts("help | status | role <name> | wifi <ssid> <password> | clearwifi | ota | reboot");
+            puts("help | status | stream on|off | mark <label> | role <name> | wifi <ssid> <password> | clearwifi | ota | reboot");
         } else if (!strcmp(line, "status")) {
-            uint8_t mac[6] = {0};
-            esp_read_mac(mac, ESP_MAC_WIFI_STA);
-            printf("version=%s role=%s id=%02x%02x%02x wifi=%s BMI270_probe=%s display=%s button_count=%" PRIu32 "\n",
-                   esp_app_get_description()->version, device_role,
-                   mac[3], mac[4], mac[5], wifi_online ? "online" : "offline",
-                   bmi270_found ? "ok" : "failed",
-                   tactile_display_ready() ? "ok" : "failed", button_count);
+            printf("version=%s role=%s id=%s wifi=%s BMI270=%s BMM150=%s display=%s stream=%s sequence=%" PRIu32 " dropped=%" PRIu32 " emitted=%" PRIu32 " button_count=%" PRIu32 "\n",
+                   esp_app_get_description()->version, device_role, device_id,
+                   wifi_online ? "online" : "offline",
+                   tactile_sensors_bmi270_ready() ? "ok" : "failed",
+                   tactile_sensors_bmm150_ready() ? "ok" : "unavailable",
+                   tactile_display_ready() ? "ok" : "failed",
+                   telemetry_enabled ? "on" : "off",
+                   telemetry_sequence, telemetry_dropped, telemetry_emitted,
+                   button_count);
+        } else if (!strcmp(line, "stream on")) {
+            puts("Telemetry stream enabled.");
+            telemetry_enabled = true;
+        } else if (!strcmp(line, "stream off")) {
+            telemetry_enabled = false;
+            puts("Telemetry stream disabled.");
+        } else if (!strncmp(line, "mark ", 5)) {
+            const char *label = line + 5;
+            if (valid_token(label, 48)) {
+                emit_marker(label);
+            } else {
+                puts("Marker must be 1-48 letters, digits, '.', '_' or '-'.");
+            }
         } else if (!strcmp(line, "ota")) {
             ota_check_requested = true;
             puts("OTA check queued (requires Wi-Fi and published stable release).");
@@ -343,13 +440,13 @@ static void console_loop(void *context) {
             esp_restart();
         } else if (!strncmp(line, "role ", 5)) {
             const char *role = line + 5;
-            if (role[0] && strlen(role) < sizeof(device_role) &&
+            if (valid_token(role, sizeof(device_role) - 1) &&
                 save_setting("role", role) == ESP_OK) {
                 strcpy(device_role, role);
                 tactile_display_update(device_role, esp_app_get_description()->version,
                                        bmi270_found, wifi_online, button_count);
                 puts("Role saved.");
-            } else puts("Role must be 1–31 characters.");
+            } else puts("Role must be 1-31 letters, digits, '.', '_' or '-'.");
         } else if (!strncmp(line, "wifi ", 5)) {
             char ssid[33] = {0};
             char password[65] = {0};
@@ -378,13 +475,21 @@ void app_main(void) {
     }
     ESP_ERROR_CHECK(err);
     read_setting("role", device_role, sizeof(device_role));
+    uint8_t mac[6] = {0};
+    esp_read_mac(mac, ESP_MAC_WIFI_STA);
+    snprintf(device_id, sizeof(device_id), "%02x%02x%02x",
+             mac[3], mac[4], mac[5]);
+    setvbuf(stdout, NULL, _IOLBF, 0);
     ESP_LOGI(TAG, "Boot firmware %s / role %s", esp_app_get_description()->version, device_role);
-    bmi270_found = probe_bmi270(); /* Probe only; BMI270 driver in P1. */
+    bmi270_found = tactile_sensors_init();
     if (!tactile_display_init(device_role, esp_app_get_description()->version,
                               bmi270_found, wifi_online, button_count)) {
         ESP_LOGE(TAG, "Display initialization failed");
     }
     xTaskCreate(button_loop, "button", 3072, NULL, 5, NULL);
+    if (bmi270_found) {
+        xTaskCreate(sensor_loop, "sensors", 6144, NULL, 6, NULL);
+    }
     xTaskCreate(console_loop, "console", 6144, NULL, 3, NULL);
     start_wifi();
     xTaskCreate(ota_loop, "ota", 10240, NULL, 3, NULL);
