@@ -10,6 +10,15 @@ USB/BLE diagnostic telemetry forms a **parallel** observation stream for session
 
 Management (device identity, Wi-Fi, OTA, rollback, configuration) is separate from latency-sensitive HID. Neither Wi-Fi nor Parc is needed for ordinary input.
 
+The v0.6 interaction is an on-device embodied reader rather than a menu.
+Gravity establishes roll and pitch relative to a settled reading pose; gyro
+motion gates intentional roll, focus and depth gestures. Roll continuously
+adjusts a retained signed RSVP rate, pause focuses the current word, and pitch
+enters or exits linked passages. The mechanical screen-button is reserved for
+recoverable boot-time provisioning because pressing it obscures the display.
+A persisted first-use tutorial acts as a capability gate and exposes its state
+in the observation stream.
+
 ## Reuse
 
 - **Mochi ESP:** ESP-IDF build, NVS, Wi-Fi provisioning, A/B OTA, GitHub Releases manifests, rollback and idle-gated updates. Do not copy pet-specific APIs, Waveshare pinmaps or e-ink rendering.

@@ -4,70 +4,57 @@ A standalone, one-handed tactile HID research device: **pebble or sphere**, buil
 
 **Status (2026-11-06): M1 is hardware-validated on `pebble-01`.** Native USB,
 8MB PSRAM, the LCD, Bosch BMI270 configuration, BMM150 auxiliary hub and 100Hz
-9-axis JSONL stream have been verified on hardware. M1 adds a standard BLE
-gyro mouse with hold-to-move clutching and tap-to-click on the Atom button.
+9-axis JSONL stream have been verified on hardware. M1 proved a standard BLE
+gyro mouse with hold-to-move clutching and tap-to-click; the v0.6 prototype
+now uses gravity-derived roll and pitch for a button-free embodied reader.
 The full labelled motion experiment and `sphere-01` comparison are deferred
 until battery power is available.
 
-## Afterword on the Atom (v0.5.0)
+## Embodied reader (v0.6.0 prototype)
 
-Afterword starts on the LCD and cycles through six short phrases. After the
-five-second Wi-Fi setup window, tap the screen-button to enter the phrase in
-focus. Hold and twist around the axis through the screen to browse. Keep it
-turned for repeated steps, unwind to stop, and release to choose.
+The device and its narrative are the same thing. There is no menu and no
+separate “interior”: when the display is facing the reader, it continuously
+speaks the current passage one word at a time.
 
-- **Step inside** opens the interior world (below).
-- **Motion** responds to rotation. Tap to return.
-- **Reading pace** previews each cadence. Release on a pace to save it.
-- **Note** reads a saved note in chunks. Tap to edit, or hold and turn to
-  return. In the editor choose a letter group and letter, borrow a device
-  word, insert a space, erase, or move the insertion cursor. Save commits up
-  to 95 lowercase ASCII characters and spaces to NVS; discard restores the
-  previous note. Twist in either direction to reach save and discard.
-- **Pointer** enables the BLE mouse clutch and tap-click. Hold still for
-  2.2 seconds and release to return to Afterword.
-- **About** shows firmware version and connectivity. Tap to return.
+- The current signed pace is retained while the display is upright.
+- Rotate the display clockwise like a dial and keep it displaced to
+  continuously increase the pace. Return upright to retain the new pace.
+- Rotate counter-clockwise to continuously decrease the pace through a
+  stopped band and into reverse. The angle is an input direction and
+  intensity, not an absolute mapping from pose to pace.
+- Remain paused for 400 ms to focus the visible word.
+- Tilt the top edge away from the reader for 300 ms to enter a focused linked
+  word.
+- Tilt the top edge toward the reader for 300 ms to return to the exact word
+  in the parent passage. Return near neutral before another tilt can fire.
 
-### Interior world (v0.5.0)
+On first use, a capability tutorial captures the reader's comfortable upright
+pose, then teaches faster, reverse, recovery to forward, pause, focus, enter
+and exit in that order. A pace lesson accepts only the direction it is
+teaching, freezes when its target is demonstrated, and advances only after the
+device returns upright. The transition from pause to the depth gestures
+requires both roll and pitch to return to the captured pose, preventing an
+already-tilted hand from accidentally satisfying “enter.” Completion persists
+in NVS; `reader tutorial restart` replays the tutorial.
 
-Afterword is the starting point for Tactile's primary meta-control; the BLE
-pointer is one capability beneath it. The interior is an experiment in
-exploring and manipulating a small world through the hand, one primary word at
-a time, with tertiary detail lines above and below.
+The root passage is the hall itself. Words such as `bell`, `study`, `garden`
+and `stairs` open deeper passages; linked words in those passages open the
+lamp, letter, seed, bowl and stone narratives. Leaf passages loop until the
+reader tilts back. A saved note, when present, is the letter's narrative.
 
-A house of four places: **hall** (bell; doors to study, garden, stair and
-outward), **study** (lamp, letter), **garden** (seed, bowl) and **cellar**
-(stone, dark until the lamp is lit). Each place and thing first *tells*
-itself word by word at the saved reading pace, then rests on its name.
+The mechanical button sits behind the display, so ordinary reading does not
+use it: pressing would obscure the word being read. Its boot-time two-second
+hold remains the recoverable Wi-Fi provisioning path. USB diagnostics remain
+available through `view reader`, `view debug` and `view telemetry`.
 
-- **Hold + twist** turns through what is here; **release** goes through a door
-  or takes up a thing. `outward` in the hall returns to Afterword.
-- **Tip** the device away from how you have been holding it to look closer:
-  the neighbour lines become a detail (lamp `glowing`, stair `cellar`). The
-  rest pose adapts within a few seconds, so any comfortable grip works.
-- **Tap** sets down the thing you hold.
+The first physical-axis assumptions are deliberately configurable:
+`reader pace <150-2000>`, `reader invert-roll on|off`, and
+`reader invert-pitch on|off`. These settings persist in NVS. The non-inverted
+defaults match clockwise-faster and top-edge-away-to-enter on `pebble-01`.
 
-Each thing answers a different sensor channel, so the world doubles as a
-catalogue of candidate gestures for single-button meta-control:
-
-| Thing | Channel | Effect |
-| --- | --- | --- |
-| lamp | twist while held (gyro, screen axis) | winds it; fades over ~4 min; lights the cellar |
-| letter | twist while held; otherwise RSVP | reads and scrubs the saved Afterword note |
-| bowl | tilt relative to the pose it was taken up in | pours into the garden soil; rain refills it |
-| seed | stillness (< 0.15 rad/s) | grows seed → sprout → shoot → bud → flower while the soil is wet |
-| bell | shake or flick (> 6 rad/s) | rings; the house remembers how often |
-| stone | button hold duration | warms while held, cools when released |
-
-World state (lamp, water, soil, growth, warmth, rings) evolves while you are
-inside and persists to NVS as `aw_world`, at most once a minute and whenever a
-thing is set down or you step outward. Thresholds are first guesses to be
-tuned on `pebble-01`; the tip direction is deliberately sign-agnostic until
-the axis conventions are confirmed on hardware.
-
-USB commands `view debug`, `view telemetry` and `view afterword` switch
-between the diagnostic and reading interfaces. The existing boot-hold Wi-Fi
-setup and stable-release OTA poll continue to work.
+Each word is laid out around a fixed recognition anchor slightly left of its
+geometric centre. The anchor letter is red, with fixation ticks above and
+below, so differently sized words do not pull the eye across the display.
 
 ## Architecture
 
@@ -83,10 +70,9 @@ LCD status, Wi-Fi credentials, stable HTTPS OTA, A/B application partitions
 and rollback—and adds the P1 BMI270/BMM150 acquisition path plus the M1 BLE
 mouse vertical slice. It streams
 transport-neutral observations with monotonic timestamps, sequence numbers,
-missing-sample accounting and markers. After the five-second boot setup window,
-holding the button clutches in gyro-relative mouse motion and releasing it
-stops motion; a quick tap sends a left click while BLE is connected. When BLE
-is disconnected, a tap toggles diagnostics and live telemetry. Holding the
+missing-sample accounting and markers. The embodied reader is now the default
+display interaction; the previous button-clutched pointer remains compiled as
+an experimental capability but is not entered from the narrative. Holding the
 button for two seconds during boot starts on-device Wi-Fi provisioning.
 
 See [firmware/README.md](firmware/README.md) for installation/commands; see [design/architecture.md](design/architecture.md) for system boundaries, [design/experiments.md](design/experiments.md) for acceptance tests, and [hardware/atoms3r.md](hardware/atoms3r.md) for board-specific wiring.

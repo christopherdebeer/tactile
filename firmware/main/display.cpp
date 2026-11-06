@@ -28,6 +28,8 @@ bool current_ble_connected;
 uint32_t current_button_count;
 volatile int64_t last_display_activity_us;
 uint8_t current_brightness;
+aw_frame_t last_reader_frame;
+bool have_reader_frame;
 
 constexpr uint32_t background = 0x08141c;
 constexpr uint32_t panel = 0x102630;
@@ -329,20 +331,54 @@ extern "C" void tactile_display_select_reader(void) {
 }
 
 extern "C" void tactile_display_reader(const aw_frame_t *item) {
+    if (!have_reader_frame ||
+        std::memcmp(&last_reader_frame, item, sizeof(*item)) != 0) {
+        last_reader_frame = *item;
+        have_reader_frame = true;
+        note_activity();
+    }
     if (current_view != View::reader || !begin_render()) return;
     frame.fillScreen(background);
     frame.setTextDatum(lgfx::textdatum_t::middle_center);
     frame.setTextSize(1);
     frame.setTextColor(teal, background);
-    frame.drawString(item->section, 64, 13);
+    frame.drawString(item->section, 64, 12);
     frame.setTextColor(muted, background);
-    frame.drawString(item->before, 64, 40);
-    frame.drawString(item->after, 64, 87);
+    frame.drawString(item->after, 64, 92);
     frame.drawString(item->hint, 64, 115);
-    frame.setTextSize(2);
-    if (frame.textWidth(item->word) > 124) frame.setTextSize(1);
+
+    int anchor = aw_fixation_index(item->word);
+    size_t length = std::strlen(item->word);
+    if (anchor < 0 || static_cast<size_t>(anchor) >= length) anchor = 0;
+    char prefix[22] = "";
+    char pivot[2] = "";
+    char suffix[22] = "";
+    if (length) {
+        std::memcpy(prefix, item->word, static_cast<size_t>(anchor));
+        prefix[anchor] = 0;
+        pivot[0] = item->word[anchor];
+        std::snprintf(suffix, sizeof(suffix), "%s", item->word + anchor + 1);
+    }
+
+    frame.setTextSize(3);
+    if (frame.textWidth(item->word) > 108) frame.setTextSize(2);
+    if (frame.textWidth(item->word) > 108) frame.setTextSize(1);
+    int prefix_width = frame.textWidth(prefix);
+    int pivot_width = frame.textWidth(pivot);
+    int start_x = 64 - prefix_width - pivot_width / 2;
+
+    frame.drawFastHLine(17, 31, 94, 0x31505a);
+    frame.drawFastVLine(64, 31, 5, coral);
+    frame.drawFastHLine(17, 82, 94, 0x31505a);
+    frame.drawFastVLine(64, 78, 5, coral);
+
+    frame.setTextDatum(lgfx::textdatum_t::middle_left);
     frame.setTextColor(text, background);
-    frame.drawString(item->word, 64, 63);
+    frame.drawString(prefix, start_x, 57);
+    frame.setTextColor(coral, background);
+    frame.drawString(pivot, start_x + prefix_width, 57);
+    frame.setTextColor(text, background);
+    frame.drawString(suffix, start_x + prefix_width + pivot_width, 57);
     end_render();
 }
 

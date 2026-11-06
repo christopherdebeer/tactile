@@ -43,21 +43,38 @@ released-clutch gating, tap-to-click, Guest Wi-Fi coexistence, persistent
 Z/Y-inverted mapping and `22/28` gain were exercised successfully. Dragging
 and right-click remain outside the one-button M1 mapping.
 
-## Meta-control exploration — Afterword interior (v0.5.0)
-- Treat Afterword as the primary meta-control; the BLE pointer is its first
-  capability. The interior world probes which sensor channels can carry
-  simple, expressive control with one button: twist-while-held, tilt relative
-  to an adaptive rest pose, stillness, shake/flick and hold duration.
-- Grammar under test: hold + twist browses, release chooses, tap backs out of
-  a held thing, tip looks closer (tertiary detail), and leaving is a place
-  (`outward`) rather than a reserved gesture.
-- Observe on `pebble-01`: does tipping to look closer fire during ordinary
-  handling? Does a set-down tap disturb the thing it releases? Does stillness
-  growth or a shake ring happen by accident? Which channels feel intentional?
-- Host regression: `tests/world.c` walks the house, lights the lamp, pours
-  the bowl, grows the seed, warms the stone, rings the bell and checks
-  persistence. CI runs it before every firmware build and release.
-- Not yet measured on hardware; thresholds are provisional.
+## Embodied narrative — temporal navigation (v0.6.0 prototype)
+- The device is the narrative; there is no menu entry or separate interior.
+  The hall is the root passage and the display shows exactly one word.
+- Grammar under test: each screen-facing clockwise/counter-clockwise excursion
+  continuously changes a retained signed pace while displaced; returning
+  upright freezes it. The pause state focuses a word; top edge away enters its
+  linked passage; top edge toward the reader exits to the parent word. The
+  screen-button is not part of ordinary reading.
+- Initial thresholds: configured base pace 150–2000 ms/word (440 ms default);
+  roll has a roughly 5° dead zone and reaches full analog input around 30°;
+  signed rate slews at up to 1.6× per second and is bounded at −2×/+4×; focus
+  follows 400 ms paused; enter/exit require a 300 ms tilt beyond about 18°
+  with a neutral re-arm inside about 7°.
+- First-use capability gate: capture neutral, increase pace, reach reverse,
+  recover forward, pause, focus a known word, enter, exit, and return upright.
+  Each pace lesson ignores the opposite direction and freezes after proving
+  its target. Pause must return to neutral in both roll and pitch before the
+  depth lessons begin. Completion persists and can be replayed from USB.
+- Observe on `pebble-01`: confirm perceived roll and pitch signs; determine
+  whether the pause band can be held without wrist strain; measure accidental
+  enter/exit events; tune acceleration, reverse reach and dwell times.
+- Host regression: `tests/afterword.c` covers retained relative pace,
+  pause/focus, linked entry, exact-parent exit, reverse reading, invalid
+  orientation, axis inversion and RSVP anchor placement. CI runs it before
+  every firmware build and release.
+
+Hardware observation on `pebble-01` (2026-11-06): clockwise increase,
+counter-clockwise reverse, forward recovery and pause were demonstrated with
+the device tethered. The initial tutorial allowed a small wrong-way resting
+bias to alter pace and allowed focus to begin with approximately 16.6° of
+residual pitch; both false-positive paths are now regression-covered and
+flashed. A clean enter/exit replay on the refined build remains open.
 
 ## P2 — Quantitative BLE HID
 - Pair to a computer as a conventional HID mouse/keyboard with no host app.

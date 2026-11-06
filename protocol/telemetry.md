@@ -8,7 +8,7 @@ lines containing a valid JSON object.
 ## Observation record
 
 ```json
-{"schema_version":1,"type":"observation","device_id":"d34238","role":"pebble-01","firmware_version":"0.2.0","sequence":790,"monotonic_us":9090090,"dropped":0,"acceleration_mps2":[0.708684,8.432379,4.384382],"angular_velocity_rps":[-0.001065,0.002131,0.0],"magnetic_field_ut":[30.0,5.0,2.0],"button":false,"capacitance":[],"pressure":[],"quality_flags":7}
+{"schema_version":1,"type":"observation","device_id":"d34238","role":"pebble-01","firmware_version":"0.6.0","sequence":790,"monotonic_us":9090090,"dropped":0,"acceleration_mps2":[0.708684,8.432379,4.384382],"angular_velocity_rps":[-0.001065,0.002131,0.0],"magnetic_field_ut":[30.0,5.0,2.0],"reader":{"ready":true,"roll_rad":0.12,"pitch_rad":-0.03,"rate":1.3,"roll_active":true,"roll_armed":true,"tilt_latched":false,"focused":false,"tutorial_active":true,"tutorial_complete":false,"tutorial_stage":"reverse"},"button":false,"capacitance":[],"pressure":[],"quality_flags":7}
 ```
 
 Fields:
@@ -27,6 +27,18 @@ Fields:
 - `angular_velocity_rps`: x/y/z angular velocity in radians per second.
 - `magnetic_field_ut`: compensated x/y/z magnetic field in microtesla, or
   `null` when the BMM150 is unavailable.
+- `reader`: optional embodied-reader state, present in firmware 0.6.0 and
+  later:
+  - `ready`: a stable reading pose has been captured.
+  - `roll_rad`, `pitch_rad`: filtered screen-space angles relative to that
+    pose.
+  - `rate`: retained signed RSVP multiplier; negative values read backward
+    and zero is paused.
+  - `roll_active`, `roll_armed`: analog pace-control recognition state.
+  - `tilt_latched`: a depth gesture fired and must return to neutral.
+  - `focused`: the paused word completed its stillness dwell.
+  - `tutorial_active`, `tutorial_complete`, `tutorial_stage`: first-use
+    capability-gate state.
 - `button`: current active-low screen-button state.
 - `capacitance`, `pressure`: reserved raw vectors, empty until later phases.
 - `quality_flags`: bit mask: `0x01` acceleration valid, `0x02` gyro valid,

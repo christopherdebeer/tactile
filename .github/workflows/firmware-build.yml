@@ -23,13 +23,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Afterword and interior world state machines
+      - name: Embodied reader state machine
         run: |
           flags="-std=c11 -Wall -Wextra -Werror -Ifirmware/main"
-          gcc $flags -DTACTILE_VERSION='"test"' tests/afterword.c \
-            firmware/main/afterword.c firmware/main/world.c -lm -o afterword
-          gcc $flags tests/world.c firmware/main/world.c -lm -o world
-          ./afterword && ./world
+          gcc $flags tests/afterword.c firmware/main/afterword.c -lm -o reader
+          ./reader
       - name: Telemetry stream tools
         run: python3 -m unittest discover -s tools -p 'test_*.py'
 

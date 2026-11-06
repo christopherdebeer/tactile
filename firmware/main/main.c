@@ -58,6 +58,7 @@ static volatile bool button_down = false;
 static volatile bool mouse_clutch = false;
 static volatile bool telemetry_view = false;
 static volatile bool portal_requested = false;
+static volatile bool tutorial_restart_requested = false;
 static volatile uint32_t button_count = 0;
 static volatile uint32_t telemetry_sequence = 0;
 static volatile uint32_t telemetry_dropped = 0;
@@ -68,7 +69,11 @@ static char device_id[7] = "000000";
 static QueueHandle_t display_sample_queue;
 static QueueHandle_t reader_samples;
 static volatile bool diagnostics;
-typedef struct { float twist, speed, gravity[3]; int64_t time; } reader_sample_t;
+typedef struct {
+    float angular_velocity[3];
+    float gravity[3];
+    int64_t time;
+} reader_sample_t;
 
 typedef struct {
     tactile_sensor_sample_t sensors;
@@ -88,10 +93,6 @@ static esp_err_t save_setting(const char *name, const char *value) {
     if (err == ESP_OK) err = nvs_commit(h);
     nvs_close(h);
     return err;
-}
-
-bool aw_store(const char *key, const char *value) {
-    return save_setting(key, value) == ESP_OK;
 }
 
 static bool read_setting(const char *name, char *dest, size_t capacity) {
@@ -283,15 +284,28 @@ static void button_loop(void *context) {
     int64_t started_at_us = esp_timer_get_time();
     int64_t pressed_at_us = last == 0 ? started_at_us : 0;
     bool boot_portal_handled = false;
-    char note[96] = "", pace[3] = "";
+    char note[96] = "", pace[8] = "", roll_inverted[2] = "",
+         pitch_inverted[2] = "", tutorial_setting[2] = "";
     read_setting("aw_note", note, sizeof(note));
-    read_setting("aw_pace", pace, sizeof(pace));
-    char world[48] = "";
-    if (read_setting("aw_world", world, sizeof(world))) aw_world_load(world);
-    aw_init(pace[0] ? pace[0]-'0' : 1, note, started_at_us/1000);
+    int pace_ms = 440;
+    if (read_setting("reader_ms", pace, sizeof(pace))) {
+        int configured = atoi(pace);
+        if (configured >= 150 && configured <= 2000) pace_ms = configured;
+    } else if (read_setting("aw_pace", pace, sizeof(pace))) {
+        static const int legacy_paces[] = {640, 440, 260};
+        int legacy = pace[0] - '0';
+        if (legacy >= 0 && legacy < 3) pace_ms = legacy_paces[legacy];
+    }
+    read_setting("reader_roll_inv", roll_inverted, sizeof(roll_inverted));
+    read_setting("reader_pitch_inv", pitch_inverted, sizeof(pitch_inverted));
+    bool tutorial_saved =
+        read_setting("reader_tutorial", tutorial_setting,
+                     sizeof(tutorial_setting)) &&
+        tutorial_setting[0] == '1';
+    aw_init(pace_ms, roll_inverted[0] == '1', pitch_inverted[0] == '1',
+            tutorial_saved, note, started_at_us / 1000);
     aw_frame_t previous = {0};
     reader_sample_t motion = {0};
-    bool armed = false;
     int64_t redraw = 0;
     while (true) {
         int now = gpio_get_level((gpio_num_t)TACTILE_BUTTON);
@@ -303,10 +317,26 @@ static void button_loop(void *context) {
         bool available = motion.time && us-motion.time < 150000;
         bool reader_active = !diagnostics && !portal_requested && !tactile_wifi_portal_active();
         if (reader_active) {
-            if (!boot_window && now) armed = true;
+            if (tutorial_restart_requested) {
+                tutorial_restart_requested = false;
+                tutorial_saved = false;
+                save_setting("reader_tutorial", "0");
+                aw_tutorial_restart(us / 1000);
+                memset(&previous, 0, sizeof(previous));
+                ESP_LOGI(TAG, "Reader tutorial restarted");
+            }
             aw_gravity(motion.gravity);
-            aw_tick(us/1000, armed && !now, motion.twist, motion.speed,
-                    available, wifi_online, tactile_ble_mouse_connected());
+            aw_tick(us / 1000, motion.angular_velocity, available);
+            aw_state_t reader_state;
+            aw_state(&reader_state);
+            if (reader_state.tutorial_complete && !tutorial_saved) {
+                if (save_setting("reader_tutorial", "1") == ESP_OK) {
+                    tutorial_saved = true;
+                    ESP_LOGI(TAG, "Reader tutorial capability gate completed");
+                } else {
+                    ESP_LOGW(TAG, "Could not persist tutorial completion");
+                }
+            }
             aw_frame_t frame;
             aw_frame(&frame);
             if (memcmp(&previous, &frame, sizeof(frame)) || us >= redraw) {
@@ -424,8 +454,11 @@ static void sensor_loop(void *context) {
         if (reader_samples && (sequence % 2) == 0) {
             const float *g = sample.angular_velocity_rps;
             const float *a = sample.acceleration_mps2;
-            reader_sample_t r = {g[2], sqrtf(g[0]*g[0]+g[1]*g[1]+g[2]*g[2]),
-                                 {a[0], a[1], a[2]}, timestamp};
+            reader_sample_t r = {
+                {g[0], g[1], g[2]},
+                {a[0], a[1], a[2]},
+                timestamp
+            };
             xQueueOverwrite(reader_samples, &r);
         }
         tactile_ble_mouse_sample(sample.angular_velocity_rps, mouse_clutch);
@@ -438,6 +471,8 @@ static void sensor_loop(void *context) {
         if (enabled) {
             uint32_t dropped =
                 last_emitted == UINT32_MAX ? 0 : sequence - last_emitted - 1;
+            aw_state_t reader;
+            aw_state(&reader);
             char magnetic[96];
             if (sample.quality_flags & TACTILE_QUALITY_MAG_VALID) {
                 snprintf(magnetic, sizeof(magnetic), "[%.6f,%.6f,%.6f]",
@@ -455,6 +490,12 @@ static void sensor_loop(void *context) {
                 "\"acceleration_mps2\":[%.6f,%.6f,%.6f],"
                 "\"angular_velocity_rps\":[%.6f,%.6f,%.6f],"
                 "\"magnetic_field_ut\":%s,"
+                "\"reader\":{\"ready\":%s,\"roll_rad\":%.6f,"
+                "\"pitch_rad\":%.6f,\"rate\":%.3f,"
+                "\"roll_active\":%s,\"roll_armed\":%s,"
+                "\"tilt_latched\":%s,"
+                "\"focused\":%s,\"tutorial_active\":%s,"
+                "\"tutorial_complete\":%s,\"tutorial_stage\":\"%s\"},"
                 "\"button\":%s,\"capacitance\":[],\"pressure\":[],"
                 "\"quality_flags\":%u}\n",
                 device_id, device_role, esp_app_get_description()->version,
@@ -465,6 +506,16 @@ static void sensor_loop(void *context) {
                 sample.angular_velocity_rps[1],
                 sample.angular_velocity_rps[2],
                 magnetic,
+                reader.orientation_ready ? "true" : "false",
+                reader.roll_radians, reader.pitch_radians,
+                reader.rate_multiplier,
+                reader.roll_active ? "true" : "false",
+                reader.roll_armed ? "true" : "false",
+                reader.tilt_latched ? "true" : "false",
+                reader.focused ? "true" : "false",
+                reader.tutorial_active ? "true" : "false",
+                reader.tutorial_complete ? "true" : "false",
+                aw_tutorial_stage_name(reader.tutorial_stage),
                 button_down ? "true" : "false", sample.quality_flags);
             last_emitted = sequence;
             ++telemetry_emitted;
@@ -544,16 +595,29 @@ static void console_loop(void *context) {
         prompt_visible = false;
         line[strcspn(line, "\r\n")] = 0;
         if (!strcmp(line, "help")) {
-            puts("help | status | view afterword|debug|telemetry | mouse axis x|y | mouse invert-y on|off | mouse gain <horizontal> <vertical> | portal | stream on|off | mark <label> | role <name> | wifi <ssid> <password> | clearwifi | ota | reboot");
+            puts("help | status | view reader|debug|telemetry | reader pace <150-2000> | reader invert-roll on|off | reader invert-pitch on|off | reader tutorial restart | mouse axis x|y | mouse invert-y on|off | mouse gain <horizontal> <vertical> | portal | stream on|off | mark <label> | role <name> | wifi <ssid> <password> | clearwifi | ota | reboot");
         } else if (!strcmp(line, "status")) {
             float horizontal_gain;
             float vertical_gain;
             tactile_ble_mouse_gain(&horizontal_gain, &vertical_gain);
-            printf("version=%s role=%s id=%s wifi=%s portal=%s view=%s BLE=%s clutch=%s mouse_map=z/%c%s gain=%.1f/%.1f hid_reports=%" PRIu32 " hid_clicks=%" PRIu32 " BMI270=%s BMM150=%s display=%s stream=%s sequence=%" PRIu32 " dropped=%" PRIu32 " emitted=%" PRIu32 " button_count=%" PRIu32 "\n",
+            aw_state_t reader;
+            aw_state(&reader);
+            printf("version=%s role=%s id=%s wifi=%s portal=%s view=%s reader_pace_ms=%d reader_roll=%s reader_pitch=%s reader_rate=%.2f reader_roll_deg=%.1f reader_pitch_deg=%.1f reader_ready=%s reader_focus=%s tutorial=%s/%s BLE=%s clutch=%s mouse_map=z/%c%s gain=%.1f/%.1f hid_reports=%" PRIu32 " hid_clicks=%" PRIu32 " BMI270=%s BMM150=%s display=%s stream=%s sequence=%" PRIu32 " dropped=%" PRIu32 " emitted=%" PRIu32 " button_count=%" PRIu32 "\n",
                    esp_app_get_description()->version, device_role, device_id,
                    wifi_online ? "online" : "offline",
                    tactile_wifi_portal_active() ? "active" : "off",
-                   diagnostics ? (telemetry_view ? "telemetry" : "debug") : "afterword",
+                   diagnostics ? (telemetry_view ? "telemetry" : "debug") : "reader",
+                   aw_pace_ms(),
+                   aw_roll_inverted() ? "inverted" : "normal",
+                   aw_pitch_inverted() ? "inverted" : "normal",
+                   reader.rate_multiplier,
+                   reader.roll_radians * 180.0f / (float)M_PI,
+                   reader.pitch_radians * 180.0f / (float)M_PI,
+                   reader.orientation_ready ? "yes" : "no",
+                   reader.focused ? "yes" : "no",
+                   reader.tutorial_active ? "active" :
+                   (reader.tutorial_complete ? "complete" : "off"),
+                   aw_tutorial_stage_name(reader.tutorial_stage),
                    tactile_ble_mouse_connected() ? "connected" :
                    (tactile_ble_mouse_ready() ? "pairing" : "off"),
                    mouse_clutch ? "on" : "off",
@@ -568,10 +632,11 @@ static void console_loop(void *context) {
                    telemetry_enabled ? "on" : "off",
                    telemetry_sequence, telemetry_dropped, telemetry_emitted,
                    button_count);
-        } else if (!strcmp(line, "view afterword")) {
+        } else if (!strcmp(line, "view reader") ||
+                   !strcmp(line, "view afterword")) {
             diagnostics = false;
             tactile_display_select_reader();
-            puts("Afterword selected.");
+            puts("Embodied reader selected.");
         } else if (!strcmp(line, "view debug")) {
             diagnostics = true;
             telemetry_view = false;
@@ -582,6 +647,35 @@ static void console_loop(void *context) {
             telemetry_view = true;
             tactile_display_set_telemetry_view(true);
             puts("Telemetry view selected.");
+        } else if (!strncmp(line, "reader pace ", 12)) {
+            int configured;
+            if (sscanf(line + 12, "%d", &configured) == 1 &&
+                aw_set_pace_ms(configured)) {
+                char setting[8];
+                snprintf(setting, sizeof(setting), "%d", configured);
+                save_setting("reader_ms", setting);
+                printf("Reader base pace set to %d ms per word.\n",
+                       configured);
+            } else {
+                puts("Usage: reader pace <150-2000 milliseconds>");
+            }
+        } else if (!strcmp(line, "reader invert-roll on") ||
+                   !strcmp(line, "reader invert-roll off")) {
+            bool inverted = !strcmp(line, "reader invert-roll on");
+            aw_set_inversions(inverted, aw_pitch_inverted());
+            save_setting("reader_roll_inv", inverted ? "1" : "0");
+            printf("Reader roll inversion %s.\n",
+                   inverted ? "enabled" : "disabled");
+        } else if (!strcmp(line, "reader invert-pitch on") ||
+                   !strcmp(line, "reader invert-pitch off")) {
+            bool inverted = !strcmp(line, "reader invert-pitch on");
+            aw_set_inversions(aw_roll_inverted(), inverted);
+            save_setting("reader_pitch_inv", inverted ? "1" : "0");
+            printf("Reader pitch inversion %s.\n",
+                   inverted ? "enabled" : "disabled");
+        } else if (!strcmp(line, "reader tutorial restart")) {
+            tutorial_restart_requested = true;
+            puts("Reader tutorial restart queued.");
         } else if (!strcmp(line, "mouse axis x") ||
                    !strcmp(line, "mouse axis y")) {
             char axis = line[strlen(line) - 1];
