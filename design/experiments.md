@@ -8,6 +8,13 @@
 - Offline execution must remain possible when Wi-Fi is unavailable.
 - **Nothing is considered hardware-validated until these steps have actually run.**
 
+`pebble-01` OTA result (2026-11-06): the published `v0.3.0` release workflow
+completed successfully. A verified v0.2.2 application was placed in `ota_0`;
+the device downloaded v0.3.0 over Guest Wi-Fi into `ota_1`, booted from
+`0x310000`, passed the ten-second health window and validated the new slot.
+Role, Wi-Fi credentials, BLE bond and mouse tuning survived. The second-device
+upgrade and deliberate rollback/recovery drills remain open.
+
 ## P1 — Raw 9-axis telemetry and reproducibility
 - [x] Bosch BMI270 initialization/configuration plus BMM150 auxiliary sensor hub
   validated on `pebble-01`.
