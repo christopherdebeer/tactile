@@ -1,6 +1,6 @@
 # P1 telemetry protocol
 
-Firmware 0.2.0 emits UTF-8 newline-delimited JSON (JSONL) over native USB
+Firmware 0.2.0 and later emits UTF-8 newline-delimited JSON (JSONL) over native USB
 serial at 115200 baud. Send `stream on` to begin and `stream off` to stop.
 Diagnostic text may share the serial connection, so collectors accept only
 lines containing a valid JSON object.

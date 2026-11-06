@@ -13,6 +13,7 @@
 #include <string.h>
 
 #include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
 #include "freertos/task.h"
 
 #include "driver/gpio.h"
@@ -36,17 +37,22 @@
 #include "board.h"
 #include "display.h"
 #include "sensors.h"
+#include "wifi_manager.h"
 
 #define MANIFEST_URL "https://github.com/christopherdebeer/tactile/releases/latest/download/latest.json"
 #define RELEASE_BIN_PREFIX "https://github.com/christopherdebeer/tactile/releases/download/"
 #define OTA_POLL_SECONDS (30 * 60)
 #define MANIFEST_CAP 2048
+#define BUTTON_DEBOUNCE_US 50000
+#define BUTTON_LONG_PRESS_US 3000000
 
 static const char *TAG = "tactile";
 static volatile bool wifi_online = false;
 static volatile bool ota_check_requested = false;
 static volatile bool telemetry_enabled = false;
 static volatile bool button_down = false;
+static volatile bool telemetry_view = false;
+static volatile bool portal_requested = false;
 static volatile uint32_t button_count = 0;
 static volatile uint32_t telemetry_sequence = 0;
 static volatile uint32_t telemetry_dropped = 0;
@@ -54,6 +60,13 @@ static volatile uint32_t telemetry_emitted = 0;
 static bool bmi270_found = false;
 static char device_role[32] = "unassigned";
 static char device_id[7] = "000000";
+static QueueHandle_t display_sample_queue;
+
+typedef struct {
+    tactile_sensor_sample_t sensors;
+    uint32_t sequence;
+    uint32_t dropped;
+} display_sample_t;
 
 static esp_err_t save_setting(const char *name, const char *value) {
     nvs_handle_t h;
@@ -74,46 +87,46 @@ static bool read_setting(const char *name, char *dest, size_t capacity) {
     return err == ESP_OK && len > 1;
 }
 
-static void on_wifi_event(void *ctx, esp_event_base_t base, int32_t id, void *data) {
-    (void)ctx;
-    (void)data;
-    if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
-        esp_wifi_connect();
-    } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
-        wifi_online = false;
-        esp_wifi_connect();
-    } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
-        wifi_online = true;
+static void wifi_status_changed(bool online) {
+    wifi_online = online;
+    if (online) {
         ESP_LOGI(TAG, "Wi-Fi online, OTA polling available");
-        tactile_display_update(device_role, esp_app_get_description()->version,
-                               bmi270_found, wifi_online, button_count);
     }
+    tactile_display_update(device_role, esp_app_get_description()->version,
+                           bmi270_found, wifi_online, button_count);
 }
 
-static void start_wifi(void) {
-    char ssid[33] = {0};
-    char pass[65] = {0};
-    if (!read_setting("ssid", ssid, sizeof(ssid))) {
-        ESP_LOGI(TAG, "No Wi-Fi credentials. Set via serial: wifi <SSID> <PASSWORD>");
+static void portal_start_task(void *context) {
+    (void)context;
+    char ap_ssid[33];
+    char ap_password[65];
+    snprintf(ap_ssid, sizeof(ap_ssid), "tactile-%s", device_id);
+    strlcpy(ap_password, "...", sizeof(ap_password));
+    tactile_display_wifi_setup(ap_ssid, ap_password, false);
+    esp_err_t error = tactile_wifi_start_portal(
+        device_id, ap_ssid, sizeof(ap_ssid), ap_password,
+        sizeof(ap_password));
+    if (error == ESP_OK) {
+        tactile_display_wifi_setup(ap_ssid, ap_password, true);
+    } else {
+        ESP_LOGE(TAG, "Captive portal failed: %s", esp_err_to_name(error));
+        portal_requested = false;
+        tactile_display_leave_wifi_setup();
+    }
+    memset(ap_password, 0, sizeof(ap_password));
+    vTaskDelete(NULL);
+}
+
+static void request_wifi_portal(void) {
+    if (portal_requested || tactile_wifi_portal_active()) {
         return;
     }
-    read_setting("password", pass, sizeof(pass));
-    ESP_ERROR_CHECK(esp_netif_init());
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
-    esp_netif_create_default_wifi_sta();
-    wifi_init_config_t init = WIFI_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK(esp_wifi_init(&init));
-    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
-                                               on_wifi_event, NULL));
-    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP,
-                                               on_wifi_event, NULL));
-    wifi_config_t station = {0};
-    memcpy(station.sta.ssid, ssid, strlen(ssid));
-    memcpy(station.sta.password, pass, strlen(pass));
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &station));
-    ESP_ERROR_CHECK(esp_wifi_start());
-    memset(pass, 0, sizeof(pass));
+    portal_requested = true;
+    if (xTaskCreate(portal_start_task, "wifi-portal", 8192, NULL, 4, NULL) !=
+        pdPASS) {
+        portal_requested = false;
+        ESP_LOGE(TAG, "Could not allocate captive portal task");
+    }
 }
 
 typedef struct {
@@ -247,20 +260,58 @@ static void button_loop(void *context) {
     };
     ESP_ERROR_CHECK(gpio_config(&pin));
     int last = gpio_get_level((gpio_num_t)TACTILE_BUTTON);
-    int64_t last_press_us = 0;
+    int64_t pressed_at_us = 0;
+    bool long_press_handled = false;
     while (true) {
         int now = gpio_get_level((gpio_num_t)TACTILE_BUTTON);
         button_down = now == 0;
         int64_t us = esp_timer_get_time();
-        if (last && !now && us - last_press_us > 150000) {
+        if (last && !now) {
+            pressed_at_us = us;
+            long_press_handled = false;
+        } else if (!now && pressed_at_us != 0 && !long_press_handled &&
+                   us - pressed_at_us >= BUTTON_LONG_PRESS_US) {
+            long_press_handled = true;
             ++button_count;
-            last_press_us = us;
-            ESP_LOGI(TAG, "Button press #%" PRIu32 " at %" PRId64 " us", button_count, us);
+            ESP_LOGI(TAG, "Long press #%" PRIu32 ": starting Wi-Fi setup",
+                     button_count);
+            request_wifi_portal();
+        } else if (!last && now && pressed_at_us != 0) {
+            int64_t duration = us - pressed_at_us;
+            if (!long_press_handled && duration >= BUTTON_DEBOUNCE_US &&
+                !portal_requested && !tactile_wifi_portal_active()) {
+                ++button_count;
+                telemetry_view = !telemetry_view;
+                ESP_LOGI(TAG, "Short press #%" PRIu32 ": %s view",
+                         button_count,
+                         telemetry_view ? "telemetry" : "debug");
+                tactile_display_set_telemetry_view(telemetry_view);
+            }
+            pressed_at_us = 0;
+        }
+        if (last != now) {
             tactile_display_update(device_role, esp_app_get_description()->version,
                                    bmi270_found, wifi_online, button_count);
         }
         last = now;
         vTaskDelay(pdMS_TO_TICKS(20));
+    }
+}
+
+static void display_loop(void *context) {
+    (void)context;
+    display_sample_t sample;
+    while (true) {
+        if (xQueueReceive(display_sample_queue, &sample, portMAX_DELAY) ==
+            pdTRUE) {
+            tactile_display_telemetry(
+                sample.sensors.acceleration_mps2,
+                sample.sensors.angular_velocity_rps,
+                sample.sensors.magnetic_field_ut,
+                (sample.sensors.quality_flags &
+                 TACTILE_QUALITY_MAG_VALID) != 0,
+                sample.sequence, sample.dropped);
+        }
     }
 }
 
@@ -342,6 +393,14 @@ static void sensor_loop(void *context) {
             last_emitted = sequence;
             ++telemetry_emitted;
         }
+        if (display_sample_queue && (sequence % 20) == 0) {
+            display_sample_t display_sample = {
+                .sensors = sample,
+                .sequence = sequence,
+                .dropped = telemetry_dropped,
+            };
+            xQueueOverwrite(display_sample_queue, &display_sample);
+        }
         ++sequence;
         telemetry_sequence = sequence;
     }
@@ -403,17 +462,30 @@ static void console_loop(void *context) {
         prompt_visible = false;
         line[strcspn(line, "\r\n")] = 0;
         if (!strcmp(line, "help")) {
-            puts("help | status | stream on|off | mark <label> | role <name> | wifi <ssid> <password> | clearwifi | ota | reboot");
+            puts("help | status | view debug|telemetry | portal | stream on|off | mark <label> | role <name> | wifi <ssid> <password> | clearwifi | ota | reboot");
         } else if (!strcmp(line, "status")) {
-            printf("version=%s role=%s id=%s wifi=%s BMI270=%s BMM150=%s display=%s stream=%s sequence=%" PRIu32 " dropped=%" PRIu32 " emitted=%" PRIu32 " button_count=%" PRIu32 "\n",
+            printf("version=%s role=%s id=%s wifi=%s portal=%s view=%s BMI270=%s BMM150=%s display=%s stream=%s sequence=%" PRIu32 " dropped=%" PRIu32 " emitted=%" PRIu32 " button_count=%" PRIu32 "\n",
                    esp_app_get_description()->version, device_role, device_id,
                    wifi_online ? "online" : "offline",
+                   tactile_wifi_portal_active() ? "active" : "off",
+                   telemetry_view ? "telemetry" : "debug",
                    tactile_sensors_bmi270_ready() ? "ok" : "failed",
                    tactile_sensors_bmm150_ready() ? "ok" : "unavailable",
                    tactile_display_ready() ? "ok" : "failed",
                    telemetry_enabled ? "on" : "off",
                    telemetry_sequence, telemetry_dropped, telemetry_emitted,
                    button_count);
+        } else if (!strcmp(line, "view debug")) {
+            telemetry_view = false;
+            tactile_display_set_telemetry_view(false);
+            puts("Debug view selected.");
+        } else if (!strcmp(line, "view telemetry")) {
+            telemetry_view = true;
+            tactile_display_set_telemetry_view(true);
+            puts("Telemetry view selected.");
+        } else if (!strcmp(line, "portal")) {
+            request_wifi_portal();
+            puts("Wi-Fi setup requested.");
         } else if (!strcmp(line, "stream on")) {
             puts("Telemetry stream enabled.");
             telemetry_enabled = true;
@@ -486,12 +558,18 @@ void app_main(void) {
                               bmi270_found, wifi_online, button_count)) {
         ESP_LOGE(TAG, "Display initialization failed");
     }
+    display_sample_queue = xQueueCreate(1, sizeof(display_sample_t));
+    if (display_sample_queue) {
+        xTaskCreate(display_loop, "display", 4096, NULL, 2, NULL);
+    } else {
+        ESP_LOGE(TAG, "Display sample queue allocation failed");
+    }
     xTaskCreate(button_loop, "button", 3072, NULL, 5, NULL);
     if (bmi270_found) {
-        xTaskCreate(sensor_loop, "sensors", 6144, NULL, 6, NULL);
+        xTaskCreate(sensor_loop, "sensors", 6144, NULL, 24, NULL);
     }
     xTaskCreate(console_loop, "console", 6144, NULL, 3, NULL);
-    start_wifi();
+    tactile_wifi_start_saved(wifi_status_changed);
     xTaskCreate(ota_loop, "ota", 10240, NULL, 3, NULL);
 
     /* A failed boot prior to this timer trips bootloader rollback on next

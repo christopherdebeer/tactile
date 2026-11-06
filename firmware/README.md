@@ -1,8 +1,8 @@
 # Firmware — AtomS3R
 
-**Firmware 0.2.0 has been flashed and boot-tested on an AtomS3R.** It supports
+**Firmware 0.2.1 has been flashed and boot-tested on an AtomS3R.** It supports
 the native USB console, LCD status screen, button state, Bosch BMI270/BMM150
-initialization, 100Hz 9-axis telemetry, Wi-Fi configuration in NVS and
+initialization, 100Hz 9-axis telemetry, captive-portal Wi-Fi provisioning and
 automatic stable HTTPS OTA with an A/B rollback-capable partition table. BLE
 HID, capacitive Trill, pressure and haptics are not implemented yet.
 
@@ -40,6 +40,24 @@ spaces. Passwords remain in local NVS and are never printed by the firmware.
 The stable JSONL contract and quality flags are documented in
 `protocol/telemetry.md`.
 
+## Button and display
+
+- Short press and release: toggle between the diagnostic status card and a
+  live view of acceleration, angular velocity and magnetic-field magnitude.
+- Hold for three seconds: start Wi-Fi setup. The display shows the
+  `tactile-<device-id>` network and a new random password for that boot.
+- Join that network from a phone or computer. The captive portal should open
+  automatically; otherwise browse to `http://192.168.4.1`.
+- Select a scanned network or type its SSID, enter its password, and save. The
+  list excludes detected Enterprise and other unsupported networks; selecting
+  one manually is rejected when it was seen in the scan. The device stores
+  accepted credentials in NVS and restarts.
+
+The equivalent USB commands are `view debug`, `view telemetry`, and `portal`.
+The setup screen remains visible until credentials are saved and the device
+restarts. If association fails afterward, the USB log includes the numeric and
+named Wi-Fi disconnect reason; the diagnostic screen remains `WIFI OFF`.
+
 ## OTA workflow
 
 1. Initially flash via USB because the bootloader/partition table cannot be installed by application OTA.
@@ -50,7 +68,11 @@ The stable JSONL contract and quality flags are documented in
 
 Stable manifest: https://github.com/christopherdebeer/tactile/releases/latest/download/latest.json
 
-**Limits:** We do not yet support beta/prerelease channels, a browser provisioning portal, a remotely triggered immediate OTA check, a strong post-update health gate, manifest hash verification or image signing. HTTPS and ESP-IDF image validation are used, but that does **not** replace signing for higher-trust fleet deployment. Wi-Fi isn't required for ordinary on-device operation.
+**Limits:** We do not yet support beta/prerelease channels, enterprise Wi-Fi,
+a remotely triggered immediate OTA check, a strong post-update health gate,
+manifest hash verification or image signing. HTTPS and ESP-IDF image
+validation are used, but that does **not** replace signing for higher-trust
+fleet deployment. Wi-Fi isn't required for ordinary on-device operation.
 
 ## Recovery
 

@@ -20,8 +20,9 @@ The firmware retains the recoverable P0 spine—native USB console, button input
 LCD status, Wi-Fi credentials, stable HTTPS OTA, A/B application partitions
 and rollback—and adds the P1 BMI270/BMM150 acquisition path. It streams
 transport-neutral observations with monotonic timestamps, sequence numbers,
-missing-sample accounting and markers. It does not yet provide a captive
-portal or advertise BLE HID.
+missing-sample accounting and markers. A short button press toggles diagnostics
+and live telemetry; a three-second hold starts on-device Wi-Fi provisioning.
+It does not yet advertise BLE HID.
 
 See [firmware/README.md](firmware/README.md) for installation/commands; see [design/architecture.md](design/architecture.md) for system boundaries, [design/experiments.md](design/experiments.md) for acceptance tests, and [hardware/atoms3r.md](hardware/atoms3r.md) for board-specific wiring.
 

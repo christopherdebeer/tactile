@@ -11,7 +11,7 @@ Authoritative pins: https://docs.m5stack.com/en/core/AtomS3R
 | --- | --- | --- |
 | SYS I2C clock | GPIO0 | BMI270 and LP5562 shared bus, I2C controller 1 |
 | SYS I2C data | GPIO45 | BMI270 at 0x68, chip ID 0x24 |
-| User button | GPIO41 | Under LCD; active low |
+| User button | GPIO41 | Active low; tap changes view, 3s hold starts Wi-Fi setup |
 | BMM150 | BMI270 auxiliary I2C | Not a standalone SYS I2C address |
 | Grove yellow | GPIO2 | Future external sensor SDA |
 | Grove white | GPIO1 | Future external sensor SCL |
