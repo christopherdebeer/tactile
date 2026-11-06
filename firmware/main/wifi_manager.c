@@ -204,7 +204,11 @@ void tactile_wifi_start_saved(tactile_wifi_status_callback_t callback) {
     memcpy(station.sta.ssid, ssid, strlen(ssid));
     strlcpy((char *)station.sta.password, password,
             sizeof(station.sta.password));
-    station.sta.threshold.authmode = WIFI_AUTH_OPEN;
+    station.sta.threshold.authmode =
+        password[0] ? WIFI_AUTH_WPA_PSK : WIFI_AUTH_OPEN;
+    station.sta.pmf_cfg.capable = true;
+    station.sta.pmf_cfg.required = false;
+    station.sta.sae_pwe_h2e = WPA3_SAE_PWE_BOTH;
     error = esp_wifi_set_mode(WIFI_MODE_STA);
     if (error == ESP_OK) {
         error = esp_wifi_set_config(WIFI_IF_STA, &station);
