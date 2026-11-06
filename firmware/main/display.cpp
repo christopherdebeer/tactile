@@ -17,8 +17,8 @@ M5GFX lcd;
 M5Canvas frame(&lcd);
 SemaphoreHandle_t display_mutex;
 bool display_ready;
-enum class View { debug, telemetry, wifi_setup };
-View current_view = View::debug;
+enum class View { reader, debug, telemetry, wifi_setup };
+View current_view = View::reader;
 char current_role[32] = "unassigned";
 char current_version[24] = "";
 bool current_bmi270_ok;
@@ -321,8 +321,29 @@ extern "C" void tactile_display_wifi_setup(const char *ssid,
 
 extern "C" void tactile_display_leave_wifi_setup(void) {
     note_activity();
-    current_view = View::debug;
-    render_debug();
+    current_view = View::reader;
+}
+
+extern "C" void tactile_display_select_reader(void) {
+    if (current_view != View::wifi_setup) current_view = View::reader;
+}
+
+extern "C" void tactile_display_reader(const aw_frame_t *item) {
+    if (current_view != View::reader || !begin_render()) return;
+    frame.fillScreen(background);
+    frame.setTextDatum(lgfx::textdatum_t::middle_center);
+    frame.setTextSize(1);
+    frame.setTextColor(teal, background);
+    frame.drawString(item->section, 64, 13);
+    frame.setTextColor(muted, background);
+    frame.drawString(item->before, 64, 40);
+    frame.drawString(item->after, 64, 87);
+    frame.drawString(item->hint, 64, 115);
+    frame.setTextSize(2);
+    if (frame.textWidth(item->word) > 124) frame.setTextSize(1);
+    frame.setTextColor(text, background);
+    frame.drawString(item->word, 64, 63);
+    end_render();
 }
 
 extern "C" bool tactile_display_ready(void) {

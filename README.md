@@ -9,6 +9,28 @@ gyro mouse with hold-to-move clutching and tap-to-click on the Atom button.
 The full labelled motion experiment and `sphere-01` comparison are deferred
 until battery power is available.
 
+## Afterword on the Atom (v0.4.0)
+
+Afterword starts on the LCD and cycles through five short phrases. After the
+five-second Wi-Fi setup window, tap the screen-button to enter the phrase in
+focus. Hold and twist around the axis through the screen to browse. Keep it
+turned for repeated steps, unwind to stop, and release to choose.
+
+- **Motion** responds to rotation. Tap to return.
+- **Reading pace** previews each cadence. Release on a pace to save it.
+- **Note** reads a saved note in chunks. Tap to edit, or hold and turn to
+  return. In the editor choose a letter group and letter, borrow a device
+  word, insert a space, erase, or move the insertion cursor. Save commits up
+  to 95 lowercase ASCII characters and spaces to NVS; discard restores the
+  previous note. Twist in either direction to reach save and discard.
+- **Pointer** enables the BLE mouse clutch and tap-click. Hold still for
+  2.2 seconds and release to return to Afterword.
+- **About** shows firmware version and connectivity. Tap to return.
+
+USB commands `view debug`, `view telemetry` and `view afterword` switch
+between the diagnostic and reading interfaces. The existing boot-hold Wi-Fi
+setup and stable-release OTA poll continue to work.
+
 ## Architecture
 
 - **Device** — ESP-IDF firmware, USB diagnostics, Wi-Fi OTA, eventually BLE HID and haptics. Standard HID must work without Wi-Fi or a connected studio.

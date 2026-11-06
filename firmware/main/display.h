@@ -7,6 +7,10 @@
 extern "C" {
 #endif
 
+#include "afterword.h"
+void tactile_display_reader(const aw_frame_t *frame);
+void tactile_display_select_reader(void);
+
 bool tactile_display_init(const char *role, const char *version,
                           bool bmi270_ok, bool wifi_online,
                           uint32_t button_count);

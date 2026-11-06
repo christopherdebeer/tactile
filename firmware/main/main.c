@@ -8,6 +8,7 @@
 #include <stdint.h>
 #include <ctype.h>
 #include <inttypes.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -65,6 +66,9 @@ static bool bmi270_found = false;
 static char device_role[32] = "unassigned";
 static char device_id[7] = "000000";
 static QueueHandle_t display_sample_queue;
+static QueueHandle_t reader_samples;
+static volatile bool diagnostics;
+typedef struct { float twist, speed; int64_t time; } reader_sample_t;
 
 typedef struct {
     tactile_sensor_sample_t sensors;
@@ -84,6 +88,10 @@ static esp_err_t save_setting(const char *name, const char *value) {
     if (err == ESP_OK) err = nvs_commit(h);
     nvs_close(h);
     return err;
+}
+
+bool aw_store(const char *key, const char *value) {
+    return save_setting(key, value) == ESP_OK;
 }
 
 static bool read_setting(const char *name, char *dest, size_t capacity) {
@@ -275,12 +283,36 @@ static void button_loop(void *context) {
     int64_t started_at_us = esp_timer_get_time();
     int64_t pressed_at_us = last == 0 ? started_at_us : 0;
     bool boot_portal_handled = false;
+    char note[96] = "", pace[3] = "";
+    read_setting("aw_note", note, sizeof(note));
+    read_setting("aw_pace", pace, sizeof(pace));
+    aw_init(pace[0] ? pace[0]-'0' : 1, note, started_at_us/1000);
+    aw_frame_t previous = {0};
+    reader_sample_t motion = {0};
+    bool armed = false;
+    int64_t redraw = 0;
     while (true) {
         int now = gpio_get_level((gpio_num_t)TACTILE_BUTTON);
         button_down = now == 0;
         int64_t us = esp_timer_get_time();
         bool boot_window = us - started_at_us < BOOT_PORTAL_WINDOW_US;
-        mouse_clutch = !boot_window && now == 0 && !portal_requested &&
+        bool pointer_before = diagnostics || aw_pointer();
+        if (reader_samples) xQueueReceive(reader_samples, &motion, 0);
+        bool available = motion.time && us-motion.time < 150000;
+        bool reader_active = !diagnostics && !portal_requested && !tactile_wifi_portal_active();
+        if (reader_active) {
+            if (!boot_window && now) armed = true;
+            aw_tick(us/1000, armed && !now, motion.twist, motion.speed,
+                    available, wifi_online, tactile_ble_mouse_connected());
+            aw_frame_t frame;
+            aw_frame(&frame);
+            if (memcmp(&previous, &frame, sizeof(frame)) || us >= redraw) {
+                tactile_display_reader(&frame);
+                previous = frame;
+                redraw = us + 1000000;
+            }
+        }
+        mouse_clutch = pointer_before && !boot_window && now == 0 && !portal_requested &&
                        !tactile_wifi_portal_active();
         if (last && !now) {
             pressed_at_us = us;
@@ -300,7 +332,7 @@ static void button_loop(void *context) {
                 duration <= BUTTON_CLICK_MAX_US &&
                 !portal_requested && !tactile_wifi_portal_active()) {
                 ++button_count;
-                if (tactile_ble_mouse_connected()) {
+                if (pointer_before && tactile_ble_mouse_connected()) {
                     if (tactile_ble_mouse_click()) {
                         ESP_LOGI(TAG, "Tap #%" PRIu32 ": left click",
                                  button_count);
@@ -308,7 +340,7 @@ static void button_loop(void *context) {
                         ESP_LOGW(TAG, "Tap #%" PRIu32 ": click queue full",
                                  button_count);
                     }
-                } else {
+                } else if (diagnostics) {
                     telemetry_view = !telemetry_view;
                     ESP_LOGI(TAG, "Tap #%" PRIu32 ": %s view",
                              button_count,
@@ -385,6 +417,11 @@ static void sensor_loop(void *context) {
             ++sequence;
             telemetry_sequence = sequence;
             continue;
+        }
+        if (reader_samples && (sequence % 2) == 0) {
+            const float *g = sample.angular_velocity_rps;
+            reader_sample_t r = {g[2], sqrtf(g[0]*g[0]+g[1]*g[1]+g[2]*g[2]), timestamp};
+            xQueueOverwrite(reader_samples, &r);
         }
         tactile_ble_mouse_sample(sample.angular_velocity_rps, mouse_clutch);
         float mouse_motion[2];
@@ -502,7 +539,7 @@ static void console_loop(void *context) {
         prompt_visible = false;
         line[strcspn(line, "\r\n")] = 0;
         if (!strcmp(line, "help")) {
-            puts("help | status | view debug|telemetry | mouse axis x|y | mouse invert-y on|off | mouse gain <horizontal> <vertical> | portal | stream on|off | mark <label> | role <name> | wifi <ssid> <password> | clearwifi | ota | reboot");
+            puts("help | status | view afterword|debug|telemetry | mouse axis x|y | mouse invert-y on|off | mouse gain <horizontal> <vertical> | portal | stream on|off | mark <label> | role <name> | wifi <ssid> <password> | clearwifi | ota | reboot");
         } else if (!strcmp(line, "status")) {
             float horizontal_gain;
             float vertical_gain;
@@ -511,7 +548,7 @@ static void console_loop(void *context) {
                    esp_app_get_description()->version, device_role, device_id,
                    wifi_online ? "online" : "offline",
                    tactile_wifi_portal_active() ? "active" : "off",
-                   telemetry_view ? "telemetry" : "debug",
+                   diagnostics ? (telemetry_view ? "telemetry" : "debug") : "afterword",
                    tactile_ble_mouse_connected() ? "connected" :
                    (tactile_ble_mouse_ready() ? "pairing" : "off"),
                    mouse_clutch ? "on" : "off",
@@ -526,11 +563,17 @@ static void console_loop(void *context) {
                    telemetry_enabled ? "on" : "off",
                    telemetry_sequence, telemetry_dropped, telemetry_emitted,
                    button_count);
+        } else if (!strcmp(line, "view afterword")) {
+            diagnostics = false;
+            tactile_display_select_reader();
+            puts("Afterword selected.");
         } else if (!strcmp(line, "view debug")) {
+            diagnostics = true;
             telemetry_view = false;
             tactile_display_set_telemetry_view(false);
             puts("Debug view selected.");
         } else if (!strcmp(line, "view telemetry")) {
+            diagnostics = true;
             telemetry_view = true;
             tactile_display_set_telemetry_view(true);
             puts("Telemetry view selected.");
@@ -657,7 +700,8 @@ void app_main(void) {
     } else {
         ESP_LOGE(TAG, "Display sample queue allocation failed");
     }
-    xTaskCreate(button_loop, "button", 3072, NULL, 5, NULL);
+    reader_samples = xQueueCreate(1, sizeof(reader_sample_t));
+    xTaskCreate(button_loop, "button", 6144, NULL, 5, NULL);
     if (!tactile_ble_mouse_init(device_role, device_id,
                                 ble_mouse_status_changed)) {
         ESP_LOGE(TAG, "BLE mouse initialization failed");

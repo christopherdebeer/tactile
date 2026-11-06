@@ -2,6 +2,7 @@ name: Firmware release
 on:
   push:
     tags: ['v*']
+    branches: ['release/v*']
 
 permissions:
   contents: write
@@ -18,7 +19,7 @@ jobs:
         shell: bash
         run: |
           . /opt/esp/idf/export.sh
-          test "v$(cat version.txt)" = "$GITHUB_REF_NAME"
+          test "v$(cat version.txt)" = "${GITHUB_REF_NAME#release/}"
           idf.py build
       - uses: actions/upload-artifact@v4
         with:
@@ -58,7 +59,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
-          gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes \
+          gh release create "${GITHUB_REF_NAME#release/}" --target "$GITHUB_SHA" --title "${GITHUB_REF_NAME#release/}" --generate-notes \
             dist/tactile.bin dist/latest.json \
             dist/bootloader/bootloader.bin \
             dist/partition_table/partition-table.bin
