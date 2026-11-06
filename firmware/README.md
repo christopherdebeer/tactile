@@ -1,10 +1,11 @@
 # Firmware — AtomS3R
 
-**Firmware 0.2.2 is the current AtomS3R build.** It supports
+**Firmware 0.3.0 is the M1 AtomS3R build.** It supports
 the native USB console, LCD status screen, button state, Bosch BMI270/BMM150
 initialization, 100Hz 9-axis telemetry, captive-portal Wi-Fi provisioning and
-automatic stable HTTPS OTA with an A/B rollback-capable partition table. BLE
-HID, capacitive Trill, pressure and haptics are not implemented yet.
+automatic stable HTTPS OTA with an A/B rollback-capable partition table. It
+also advertises a standard BLE gyro mouse on `pebble-01`; capacitive Trill,
+pressure and haptics are not implemented yet.
 
 ## Build and first USB flash
 
@@ -27,6 +28,9 @@ After that, use the USB console:
     help
     status
     role pebble-01
+    mouse axis y
+    mouse invert-y on
+    mouse gain 22 28
     stream on
     mark rest
     stream off
@@ -42,10 +46,14 @@ The stable JSONL contract and quality flags are documented in
 
 ## Button and display
 
-- Short press and release: toggle between the diagnostic status card and a
-  live view of acceleration, angular velocity and magnetic-field magnitude.
-- Hold for three seconds: start Wi-Fi setup. The display shows the
-  `tactile-<device-id>` network and a new random password for that boot.
+- During the first five seconds after boot, hold for two seconds to start
+  Wi-Fi setup. The display shows the `tactile-<device-id>` network and a new
+  random password for that boot.
+- After the boot setup window, hold the button to clutch in BLE mouse motion;
+  release it to stop motion.
+- While BLE is connected, a quick tap sends a left click. While BLE is
+  disconnected, a quick tap toggles the diagnostic card and mouse-vector
+  telemetry view. The equivalent USB view commands always remain available.
 - Join that network from a phone or computer. The captive portal should open
   automatically; otherwise browse to `http://192.168.4.1`.
 - Select a scanned network or type its SSID, enter its password, and save. The
@@ -54,9 +62,27 @@ The stable JSONL contract and quality flags are documented in
   accepted credentials in NVS and restarts.
 
 The equivalent USB commands are `view debug`, `view telemetry`, and `portal`.
+Mouse tuning commands are `mouse axis x|y`, `mouse invert-y on|off`, and
+`mouse gain <horizontal> <vertical>`; values persist in NVS. The
+hardware-tested defaults are Z-axis horizontal rotation, inverted Y-axis
+vertical rotation, and gains `22/28`.
 The setup screen remains visible until credentials are saved and the device
 restarts. If association fails afterward, the USB log includes the numeric and
 named Wi-Fi disconnect reason; the diagnostic screen remains `WIFI OFF`.
+
+The sensor loop remains 100Hz. The mouse-vector screen updates at 20fps while
+the clutch is held and 2fps while idle. Rendering uses a 16-bit off-screen
+frame buffer so a completed frame is transferred at once without visible
+clear/redraw flicker. The backlight starts below half brightness, dims after
+30 seconds without a user or radio-state event, and turns off after two
+minutes; button and connection events wake it. Wi-Fi setup keeps the screen
+awake.
+
+Cursor motion currently uses only the BMI270 gyroscope. The BMI270
+accelerometer and BMM150 magnetometer remain available in the 100Hz telemetry
+stream but are not fused into HID motion. A tap produces a standard left-button
+press/release; dragging and right-click are not mapped in this one-button M1
+control scheme.
 
 ## OTA workflow
 

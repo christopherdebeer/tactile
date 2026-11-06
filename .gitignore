@@ -6,7 +6,9 @@
 *.pyc
 __pycache__/
 firmware/build/
+firmware/build-*/
 firmware/sdkconfig
 firmware/sdkconfig.old
+firmware/sdkconfig.m1
 firmware/managed_components/
 firmware/.idf_component_manager/

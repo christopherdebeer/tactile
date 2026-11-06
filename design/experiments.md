@@ -15,9 +15,28 @@
   accounting validated on a stationary live stream.
 - Record rest, wrist reposition, deliberate roll, flick, grip and button clutch.
 - [x] Raw JSONL recorder and deterministic reference button-clutch replay.
-- [ ] Run and retain the full labelled physical-motion session set.
+- [ ] Run and retain the full labelled physical-motion session set after the
+  battery arrives; the USB cable changes the motion mechanics.
 
-## P2 — Standard BLE HID
+## M1 — `pebble-01` BLE clutch mouse vertical slice
+- Pair to a computer as `Tactile pebble-01`, using standard BLE HID with no
+  host application.
+- With the button released, motion must produce no pointer reports.
+- With the button held after the five-second boot window, rotation must move
+  the pointer; release must stop it immediately.
+- A quick tap must emit one standard left-button click without requiring a
+  host application.
+- Confirm Wi-Fi and BLE coexist, the 100Hz sensor loop remains alive, and the
+  display remains stable at 20fps while clutched and 2fps while idle.
+- USB supplies power and diagnostics only for M1. Do not treat tethered motion
+  traces as the final labelled dataset.
+
+Hardware result on `pebble-01` (2026-11-06): BLE pairing, gyro motion,
+released-clutch gating, tap-to-click, Guest Wi-Fi coexistence, persistent
+Z/Y-inverted mapping and `22/28` gain were exercised successfully. Dragging
+and right-click remain outside the one-button M1 mapping.
+
+## P2 — Quantitative BLE HID
 - Pair to a computer as a conventional HID mouse/keyboard with no host app.
 - Measure rest jitter, unintended movement per minute, clutch latency and repeatability.
 - Compare sphere and pebble with the same firmware.

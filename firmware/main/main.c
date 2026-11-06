@@ -35,6 +35,7 @@
 #include "cJSON.h"
 
 #include "board.h"
+#include "ble_mouse.h"
 #include "display.h"
 #include "sensors.h"
 #include "wifi_manager.h"
@@ -44,13 +45,16 @@
 #define OTA_POLL_SECONDS (30 * 60)
 #define MANIFEST_CAP 2048
 #define BUTTON_DEBOUNCE_US 50000
-#define BUTTON_LONG_PRESS_US 3000000
+#define BUTTON_CLICK_MAX_US 250000
+#define BOOT_PORTAL_HOLD_US 2000000
+#define BOOT_PORTAL_WINDOW_US 5000000
 
 static const char *TAG = "tactile";
 static volatile bool wifi_online = false;
 static volatile bool ota_check_requested = false;
 static volatile bool telemetry_enabled = false;
 static volatile bool button_down = false;
+static volatile bool mouse_clutch = false;
 static volatile bool telemetry_view = false;
 static volatile bool portal_requested = false;
 static volatile uint32_t button_count = 0;
@@ -64,6 +68,10 @@ static QueueHandle_t display_sample_queue;
 
 typedef struct {
     tactile_sensor_sample_t sensors;
+    float motion[2];
+    bool clutch;
+    char vertical_axis;
+    bool vertical_inverted;
     uint32_t sequence;
     uint32_t dropped;
 } display_sample_t;
@@ -94,6 +102,10 @@ static void wifi_status_changed(bool online) {
     }
     tactile_display_update(device_role, esp_app_get_description()->version,
                            bmi270_found, wifi_online, button_count);
+}
+
+static void ble_mouse_status_changed(bool ready, bool connected) {
+    tactile_display_ble_status(ready, connected);
 }
 
 static void portal_start_task(void *context) {
@@ -260,32 +272,49 @@ static void button_loop(void *context) {
     };
     ESP_ERROR_CHECK(gpio_config(&pin));
     int last = gpio_get_level((gpio_num_t)TACTILE_BUTTON);
-    int64_t pressed_at_us = 0;
-    bool long_press_handled = false;
+    int64_t started_at_us = esp_timer_get_time();
+    int64_t pressed_at_us = last == 0 ? started_at_us : 0;
+    bool boot_portal_handled = false;
     while (true) {
         int now = gpio_get_level((gpio_num_t)TACTILE_BUTTON);
         button_down = now == 0;
         int64_t us = esp_timer_get_time();
+        bool boot_window = us - started_at_us < BOOT_PORTAL_WINDOW_US;
+        mouse_clutch = !boot_window && now == 0 && !portal_requested &&
+                       !tactile_wifi_portal_active();
         if (last && !now) {
             pressed_at_us = us;
-            long_press_handled = false;
-        } else if (!now && pressed_at_us != 0 && !long_press_handled &&
-                   us - pressed_at_us >= BUTTON_LONG_PRESS_US) {
-            long_press_handled = true;
+        } else if (boot_window && !now && pressed_at_us != 0 &&
+                   !boot_portal_handled &&
+                   us - pressed_at_us >= BOOT_PORTAL_HOLD_US) {
+            boot_portal_handled = true;
+            mouse_clutch = false;
             ++button_count;
-            ESP_LOGI(TAG, "Long press #%" PRIu32 ": starting Wi-Fi setup",
+            ESP_LOGI(TAG,
+                     "Boot hold #%" PRIu32 ": starting Wi-Fi setup",
                      button_count);
             request_wifi_portal();
         } else if (!last && now && pressed_at_us != 0) {
             int64_t duration = us - pressed_at_us;
-            if (!long_press_handled && duration >= BUTTON_DEBOUNCE_US &&
+            if (!boot_window && duration >= BUTTON_DEBOUNCE_US &&
+                duration <= BUTTON_CLICK_MAX_US &&
                 !portal_requested && !tactile_wifi_portal_active()) {
                 ++button_count;
-                telemetry_view = !telemetry_view;
-                ESP_LOGI(TAG, "Short press #%" PRIu32 ": %s view",
-                         button_count,
-                         telemetry_view ? "telemetry" : "debug");
-                tactile_display_set_telemetry_view(telemetry_view);
+                if (tactile_ble_mouse_connected()) {
+                    if (tactile_ble_mouse_click()) {
+                        ESP_LOGI(TAG, "Tap #%" PRIu32 ": left click",
+                                 button_count);
+                    } else {
+                        ESP_LOGW(TAG, "Tap #%" PRIu32 ": click queue full",
+                                 button_count);
+                    }
+                } else {
+                    telemetry_view = !telemetry_view;
+                    ESP_LOGI(TAG, "Tap #%" PRIu32 ": %s view",
+                             button_count,
+                             telemetry_view ? "telemetry" : "debug");
+                    tactile_display_set_telemetry_view(telemetry_view);
+                }
             }
             pressed_at_us = 0;
         }
@@ -310,6 +339,8 @@ static void display_loop(void *context) {
                 sample.sensors.magnetic_field_ut,
                 (sample.sensors.quality_flags &
                  TACTILE_QUALITY_MAG_VALID) != 0,
+                sample.motion, sample.clutch, sample.vertical_axis,
+                sample.vertical_inverted,
                 sample.sequence, sample.dropped);
         }
     }
@@ -355,6 +386,9 @@ static void sensor_loop(void *context) {
             telemetry_sequence = sequence;
             continue;
         }
+        tactile_ble_mouse_sample(sample.angular_velocity_rps, mouse_clutch);
+        float mouse_motion[2];
+        tactile_ble_mouse_motion(sample.angular_velocity_rps, mouse_motion);
         if (deadline_misses) {
             sample.quality_flags |= TACTILE_QUALITY_DEADLINE_MISSED;
         }
@@ -393,9 +427,15 @@ static void sensor_loop(void *context) {
             last_emitted = sequence;
             ++telemetry_emitted;
         }
-        if (display_sample_queue && (sequence % 20) == 0) {
+        uint32_t display_interval = mouse_clutch ? 5 : 50;
+        if (display_sample_queue && (sequence % display_interval) == 0) {
             display_sample_t display_sample = {
                 .sensors = sample,
+                .motion = {mouse_motion[0], mouse_motion[1]},
+                .clutch = mouse_clutch,
+                .vertical_axis = tactile_ble_mouse_vertical_axis(),
+                .vertical_inverted =
+                    tactile_ble_mouse_vertical_inverted(),
                 .sequence = sequence,
                 .dropped = telemetry_dropped,
             };
@@ -447,7 +487,7 @@ static void console_loop(void *context) {
     char line[180];
     bool prompt_visible = false;
     setvbuf(stdin, NULL, _IONBF, 0);
-    puts("Tactile P1 USB console. Type help.");
+    puts("Tactile M1 USB console. Type help.");
     while (true) {
         if (!prompt_visible) {
             fputs("tactile> ", stdout);
@@ -462,13 +502,24 @@ static void console_loop(void *context) {
         prompt_visible = false;
         line[strcspn(line, "\r\n")] = 0;
         if (!strcmp(line, "help")) {
-            puts("help | status | view debug|telemetry | portal | stream on|off | mark <label> | role <name> | wifi <ssid> <password> | clearwifi | ota | reboot");
+            puts("help | status | view debug|telemetry | mouse axis x|y | mouse invert-y on|off | mouse gain <horizontal> <vertical> | portal | stream on|off | mark <label> | role <name> | wifi <ssid> <password> | clearwifi | ota | reboot");
         } else if (!strcmp(line, "status")) {
-            printf("version=%s role=%s id=%s wifi=%s portal=%s view=%s BMI270=%s BMM150=%s display=%s stream=%s sequence=%" PRIu32 " dropped=%" PRIu32 " emitted=%" PRIu32 " button_count=%" PRIu32 "\n",
+            float horizontal_gain;
+            float vertical_gain;
+            tactile_ble_mouse_gain(&horizontal_gain, &vertical_gain);
+            printf("version=%s role=%s id=%s wifi=%s portal=%s view=%s BLE=%s clutch=%s mouse_map=z/%c%s gain=%.1f/%.1f hid_reports=%" PRIu32 " hid_clicks=%" PRIu32 " BMI270=%s BMM150=%s display=%s stream=%s sequence=%" PRIu32 " dropped=%" PRIu32 " emitted=%" PRIu32 " button_count=%" PRIu32 "\n",
                    esp_app_get_description()->version, device_role, device_id,
                    wifi_online ? "online" : "offline",
                    tactile_wifi_portal_active() ? "active" : "off",
                    telemetry_view ? "telemetry" : "debug",
+                   tactile_ble_mouse_connected() ? "connected" :
+                   (tactile_ble_mouse_ready() ? "pairing" : "off"),
+                   mouse_clutch ? "on" : "off",
+                   tactile_ble_mouse_vertical_axis(),
+                   tactile_ble_mouse_vertical_inverted() ? "-" : "+",
+                   horizontal_gain, vertical_gain,
+                   tactile_ble_mouse_reports_sent(),
+                   tactile_ble_mouse_clicks_sent(),
                    tactile_sensors_bmi270_ready() ? "ok" : "failed",
                    tactile_sensors_bmm150_ready() ? "ok" : "unavailable",
                    tactile_display_ready() ? "ok" : "failed",
@@ -483,6 +534,34 @@ static void console_loop(void *context) {
             telemetry_view = true;
             tactile_display_set_telemetry_view(true);
             puts("Telemetry view selected.");
+        } else if (!strcmp(line, "mouse axis x") ||
+                   !strcmp(line, "mouse axis y")) {
+            char axis = line[strlen(line) - 1];
+            char setting[2] = {axis, 0};
+            tactile_ble_mouse_set_vertical_axis(axis);
+            save_setting("mouse_y_axis", setting);
+            printf("Mouse vertical axis set to %c.\n", axis);
+        } else if (!strcmp(line, "mouse invert-y on") ||
+                   !strcmp(line, "mouse invert-y off")) {
+            bool inverted = !strcmp(line, "mouse invert-y on");
+            tactile_ble_mouse_set_vertical_inverted(inverted);
+            save_setting("mouse_y_inv", inverted ? "1" : "0");
+            printf("Mouse vertical inversion %s.\n",
+                   inverted ? "enabled" : "disabled");
+        } else if (!strncmp(line, "mouse gain ", 11)) {
+            float horizontal;
+            float vertical;
+            if (sscanf(line + 11, "%f %f", &horizontal, &vertical) == 2 &&
+                tactile_ble_mouse_set_gain(horizontal, vertical)) {
+                char setting[32];
+                snprintf(setting, sizeof(setting), "%.2f,%.2f",
+                         horizontal, vertical);
+                save_setting("mouse_gain", setting);
+                printf("Mouse gain set to %.1f horizontal / %.1f vertical.\n",
+                       horizontal, vertical);
+            } else {
+                puts("Usage: mouse gain <horizontal 1-60> <vertical 1-60>");
+            }
         } else if (!strcmp(line, "portal")) {
             request_wifi_portal();
             puts("Wi-Fi setup requested.");
@@ -547,6 +626,20 @@ void app_main(void) {
     }
     ESP_ERROR_CHECK(err);
     read_setting("role", device_role, sizeof(device_role));
+    char mouse_setting[4];
+    if (read_setting("mouse_y_axis", mouse_setting, sizeof(mouse_setting))) {
+        tactile_ble_mouse_set_vertical_axis(mouse_setting[0]);
+    }
+    if (read_setting("mouse_y_inv", mouse_setting, sizeof(mouse_setting))) {
+        tactile_ble_mouse_set_vertical_inverted(mouse_setting[0] == '1');
+    }
+    char gain_setting[32];
+    float horizontal_gain;
+    float vertical_gain;
+    if (read_setting("mouse_gain", gain_setting, sizeof(gain_setting)) &&
+        sscanf(gain_setting, "%f,%f", &horizontal_gain, &vertical_gain) == 2) {
+        tactile_ble_mouse_set_gain(horizontal_gain, vertical_gain);
+    }
     uint8_t mac[6] = {0};
     esp_read_mac(mac, ESP_MAC_WIFI_STA);
     snprintf(device_id, sizeof(device_id), "%02x%02x%02x",
@@ -565,11 +658,15 @@ void app_main(void) {
         ESP_LOGE(TAG, "Display sample queue allocation failed");
     }
     xTaskCreate(button_loop, "button", 3072, NULL, 5, NULL);
+    if (!tactile_ble_mouse_init(device_role, device_id,
+                                ble_mouse_status_changed)) {
+        ESP_LOGE(TAG, "BLE mouse initialization failed");
+    }
+    tactile_wifi_start_saved(wifi_status_changed);
     if (bmi270_found) {
         xTaskCreate(sensor_loop, "sensors", 6144, NULL, 24, NULL);
     }
     xTaskCreate(console_loop, "console", 6144, NULL, 3, NULL);
-    tactile_wifi_start_saved(wifi_status_changed);
     xTaskCreate(ota_loop, "ota", 10240, NULL, 3, NULL);
 
     /* A failed boot prior to this timer trips bootloader rollback on next

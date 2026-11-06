@@ -25,6 +25,7 @@ static const char *TAG = "wifi";
 static bool wifi_initialized;
 static bool wifi_started;
 static bool credentials_available;
+static bool station_reconnect_enabled;
 static bool portal_active;
 static tactile_wifi_status_callback_t status_callback;
 static httpd_handle_t http_server;
@@ -130,7 +131,7 @@ static void wifi_event(void *context, esp_event_base_t base, int32_t id,
                        void *data) {
     (void)context;
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START &&
-        credentials_available) {
+        credentials_available && station_reconnect_enabled) {
         esp_wifi_connect();
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
         const wifi_event_sta_disconnected_t *disconnected = data;
@@ -142,7 +143,7 @@ static void wifi_event(void *context, esp_event_base_t base, int32_t id,
         if (status_callback) {
             status_callback(false);
         }
-        if (credentials_available) {
+        if (credentials_available && station_reconnect_enabled) {
             esp_wifi_connect();
         }
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
@@ -188,11 +189,13 @@ void tactile_wifi_start_saved(tactile_wifi_status_callback_t callback) {
     char ssid[33] = {0};
     char password[65] = {0};
     if (!read_setting("ssid", ssid, sizeof(ssid), false)) {
-        ESP_LOGI(TAG, "No Wi-Fi credentials; hold the button for setup");
+        ESP_LOGI(TAG,
+                 "No Wi-Fi credentials; hold the button during boot for setup");
         return;
     }
     read_setting("password", password, sizeof(password), true);
     credentials_available = true;
+    station_reconnect_enabled = true;
 
     esp_err_t error = ensure_wifi_initialized();
     if (error != ESP_OK) {
@@ -450,7 +453,14 @@ static esp_err_t start_portal_services(void) {
 
 static void scan_access_points(void) {
     access_point_count = 0;
-    esp_err_t error = esp_wifi_scan_start(NULL, true);
+    esp_err_t error = ESP_ERR_WIFI_STATE;
+    for (int attempt = 0; attempt < 20; ++attempt) {
+        error = esp_wifi_scan_start(NULL, true);
+        if (error != ESP_ERR_WIFI_STATE) {
+            break;
+        }
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
     if (error != ESP_OK) {
         ESP_LOGW(TAG, "Network scan failed: %s", esp_err_to_name(error));
         return;
@@ -486,6 +496,15 @@ esp_err_t tactile_wifi_start_portal(const char *device_id,
     if (error != ESP_OK) {
         return error;
     }
+    station_reconnect_enabled = false;
+    if (wifi_started) {
+        error = esp_wifi_disconnect();
+        if (error != ESP_OK && error != ESP_ERR_WIFI_NOT_CONNECT) {
+            ESP_LOGW(TAG, "Could not stop station connection: %s",
+                     esp_err_to_name(error));
+        }
+        vTaskDelay(pdMS_TO_TICKS(250));
+    }
     wifi_config_t access_point = {0};
     strlcpy((char *)access_point.ap.ssid, ap_ssid,
             sizeof(access_point.ap.ssid));
@@ -505,6 +524,10 @@ esp_err_t tactile_wifi_start_portal(const char *device_id,
         wifi_started = error == ESP_OK;
     }
     if (error != ESP_OK) {
+        station_reconnect_enabled = credentials_available;
+        if (credentials_available) {
+            esp_wifi_connect();
+        }
         return error;
     }
 
@@ -516,6 +539,11 @@ esp_err_t tactile_wifi_start_portal(const char *device_id,
                  ap_ssid);
     } else {
         portal_active = false;
+        station_reconnect_enabled = credentials_available;
+        if (credentials_available) {
+            esp_wifi_set_mode(WIFI_MODE_STA);
+            esp_wifi_connect();
+        }
     }
     return error;
 }
