@@ -1,10 +1,11 @@
 #include "afterword.h"
+#include "world.h"
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
 
-enum page { HOME, MOTION, PACE, NOTE, EDIT, LETTER, BORROW, POINTER, DEVICE };
-enum phrase { READ_MOTION, READ_PACE, READ_NOTE, READ_POINTER, READ_DEVICE, PHRASES };
+enum page { HOME, WORLD, MOTION, PACE, NOTE, EDIT, LETTER, BORROW, POINTER, DEVICE };
+enum phrase { READ_WORLD, READ_MOTION, READ_PACE, READ_NOTE, READ_POINTER, READ_DEVICE, PHRASES };
 static const char *const groups[] = {"abcde", "fghij", "klmno", "pqrst", "uvwxyz"};
 static const char *const words[] = {"quiet","turning","motion","reading","pace","pointer"};
 static const char *const paces[] = {"slow","steady","quick"};
@@ -22,6 +23,10 @@ static bool held, live, moving, online, connected;
 static float angle;
 static uint32_t last, next, repeat_at, pressed, still_since;
 static const char *notice;
+static float gravity[3];
+
+void aw_gravity(const float a[3]) { memcpy(gravity, a, sizeof(gravity)); }
+void aw_world_load(const char *state) { world_load(state); }
 
 static int wrap(int i, int n) { return (i % n + n) % n; }
 
@@ -38,6 +43,7 @@ void aw_init(int initial, const char *note, uint32_t now) {
 
 static const char *home(int i) {
     switch (i) {
+    case READ_WORLD: return "step inside";
     case READ_MOTION: return !live ? "motion unavailable" : moving ? "motion is turning" : "motion is quiet";
     case READ_PACE: return "my reading pace";
     case READ_NOTE: return saved[0] ? "you left a note" : "leave a note";
@@ -76,9 +82,10 @@ static int choices(void) {
 static void select_choice(void) {
     switch (page) {
     case HOME: {
-        static const enum page pages[] = {MOTION,PACE,NOTE,POINTER,DEVICE};
+        static const enum page pages[] = {WORLD,MOTION,PACE,NOTE,POINTER,DEVICE};
         read_at = 0;
         enter(pages[phrase], phrase == READ_PACE ? pace : 0);
+        if (page == WORLD) world_enter(last, saved, periods[pace] / 5);
         break;
     }
     case PACE:
@@ -146,6 +153,11 @@ void aw_tick(uint32_t now, bool down, float twist, float speed, bool valid, bool
     last = now;
     live = valid; moving = valid && speed > 0.35f;
     online = wifi; connected = paired;
+    if (page == WORLD) {
+        if (world_tick(now, down, twist, speed, gravity, valid)) enter(HOME, 0);
+        held = down;
+        return;
+    }
     if (down && !held) {
         angle = 0;
         pressed = repeat_at = still_since = now;
@@ -183,6 +195,7 @@ void aw_frame(aw_frame_t *f) {
     PUT(section,"AFTERWORD");
     PUT(hint,"%s",held ? "release to choose" : "tap / hold + twist");
     switch (page) {
+    case WORLD: world_frame(f); return;
     case HOME:
         PUT(before,"%s",home(wrap(phrase-1,PHRASES)));
         PUT(word,"%s",home(phrase));

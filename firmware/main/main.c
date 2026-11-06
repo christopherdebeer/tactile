@@ -68,7 +68,7 @@ static char device_id[7] = "000000";
 static QueueHandle_t display_sample_queue;
 static QueueHandle_t reader_samples;
 static volatile bool diagnostics;
-typedef struct { float twist, speed; int64_t time; } reader_sample_t;
+typedef struct { float twist, speed, gravity[3]; int64_t time; } reader_sample_t;
 
 typedef struct {
     tactile_sensor_sample_t sensors;
@@ -286,6 +286,8 @@ static void button_loop(void *context) {
     char note[96] = "", pace[3] = "";
     read_setting("aw_note", note, sizeof(note));
     read_setting("aw_pace", pace, sizeof(pace));
+    char world[48] = "";
+    if (read_setting("aw_world", world, sizeof(world))) aw_world_load(world);
     aw_init(pace[0] ? pace[0]-'0' : 1, note, started_at_us/1000);
     aw_frame_t previous = {0};
     reader_sample_t motion = {0};
@@ -302,6 +304,7 @@ static void button_loop(void *context) {
         bool reader_active = !diagnostics && !portal_requested && !tactile_wifi_portal_active();
         if (reader_active) {
             if (!boot_window && now) armed = true;
+            aw_gravity(motion.gravity);
             aw_tick(us/1000, armed && !now, motion.twist, motion.speed,
                     available, wifi_online, tactile_ble_mouse_connected());
             aw_frame_t frame;
@@ -420,7 +423,9 @@ static void sensor_loop(void *context) {
         }
         if (reader_samples && (sequence % 2) == 0) {
             const float *g = sample.angular_velocity_rps;
-            reader_sample_t r = {g[2], sqrtf(g[0]*g[0]+g[1]*g[1]+g[2]*g[2]), timestamp};
+            const float *a = sample.acceleration_mps2;
+            reader_sample_t r = {g[2], sqrtf(g[0]*g[0]+g[1]*g[1]+g[2]*g[2]),
+                                 {a[0], a[1], a[2]}, timestamp};
             xQueueOverwrite(reader_samples, &r);
         }
         tactile_ble_mouse_sample(sample.angular_velocity_rps, mouse_clutch);

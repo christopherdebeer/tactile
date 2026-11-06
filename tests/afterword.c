@@ -5,12 +5,13 @@
 #include <string.h>
 
 static uint32_t clock_ms;
-static char stored_note[96], stored_pace[4];
+static char stored_note[96], stored_pace[4], stored_world[48];
 static bool write_ok = true;
 
 bool aw_store(const char *key, const char *value) {
     if (!write_ok) return false;
     if (!strcmp(key, "aw_note")) snprintf(stored_note, sizeof(stored_note), "%s", value);
+    else if (!strcmp(key, "aw_world")) snprintf(stored_world, sizeof(stored_world), "%s", value);
     else snprintf(stored_pace, sizeof(stored_pace), "%s", value);
     return true;
 }
@@ -36,7 +37,7 @@ static void choose(int steps) {
 
 int main(void) {
     aw_init(1, "", 0);
-    choose(0);
+    choose(1);               /* past "step inside" to motion */
     assert(!strcmp(frame().word, "quiet"));
     tick(false, 2, 20);
     assert(!strcmp(frame().word, "turning"));
@@ -51,7 +52,7 @@ int main(void) {
     choose(-6);              /* save via wrap */
     assert(!strcmp(stored_note,"turning vu"));
     aw_init(2, stored_note, clock_ms);
-    choose(2);
+    choose(3);
     assert(!strcmp(frame().word,"turning"));
     tick(false,0,1301);
     assert(!strcmp(frame().word,"vu"));
@@ -62,7 +63,7 @@ int main(void) {
     tick(true,0,20); tick(false,0,2300);
     assert(!aw_pointer());
     aw_init(1,"",clock_ms);
-    choose(1);
+    choose(2);
     write_ok = false;
     choose(1);
     assert(!strcmp(frame().hint,"save failed"));

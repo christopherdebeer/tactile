@@ -1,6 +1,6 @@
 # Firmware — AtomS3R
 
-**Firmware 0.3.0 is the M1 AtomS3R build.** It supports
+**Firmware 0.5.0 adds the Afterword interior world on top of the M1 AtomS3R build.** It supports
 the native USB console, LCD status screen, button state, Bosch BMI270/BMM150
 initialization, 100Hz 9-axis telemetry, captive-portal Wi-Fi provisioning and
 automatic stable HTTPS OTA with an A/B rollback-capable partition table. It

@@ -8,7 +8,20 @@ permissions:
   contents: write
 
 jobs:
+  host-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Afterword and interior world state machines
+        run: |
+          flags="-std=c11 -Wall -Wextra -Werror -Ifirmware/main"
+          gcc $flags -DTACTILE_VERSION='"test"' tests/afterword.c \
+            firmware/main/afterword.c firmware/main/world.c -lm -o afterword
+          gcc $flags tests/world.c firmware/main/world.c -lm -o world
+          ./afterword && ./world
+
   build:
+    needs: host-tests
     runs-on: ubuntu-latest
     container:
       image: espressif/idf:release-v5.3

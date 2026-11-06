@@ -9,13 +9,14 @@ gyro mouse with hold-to-move clutching and tap-to-click on the Atom button.
 The full labelled motion experiment and `sphere-01` comparison are deferred
 until battery power is available.
 
-## Afterword on the Atom (v0.4.0)
+## Afterword on the Atom (v0.5.0)
 
-Afterword starts on the LCD and cycles through five short phrases. After the
+Afterword starts on the LCD and cycles through six short phrases. After the
 five-second Wi-Fi setup window, tap the screen-button to enter the phrase in
 focus. Hold and twist around the axis through the screen to browse. Keep it
 turned for repeated steps, unwind to stop, and release to choose.
 
+- **Step inside** opens the interior world (below).
 - **Motion** responds to rotation. Tap to return.
 - **Reading pace** previews each cadence. Release on a pace to save it.
 - **Note** reads a saved note in chunks. Tap to edit, or hold and turn to
@@ -26,6 +27,43 @@ turned for repeated steps, unwind to stop, and release to choose.
 - **Pointer** enables the BLE mouse clutch and tap-click. Hold still for
   2.2 seconds and release to return to Afterword.
 - **About** shows firmware version and connectivity. Tap to return.
+
+### Interior world (v0.5.0)
+
+Afterword is the starting point for Tactile's primary meta-control; the BLE
+pointer is one capability beneath it. The interior is an experiment in
+exploring and manipulating a small world through the hand, one primary word at
+a time, with tertiary detail lines above and below.
+
+A house of four places: **hall** (bell; doors to study, garden, stair and
+outward), **study** (lamp, letter), **garden** (seed, bowl) and **cellar**
+(stone, dark until the lamp is lit). Each place and thing first *tells*
+itself word by word at the saved reading pace, then rests on its name.
+
+- **Hold + twist** turns through what is here; **release** goes through a door
+  or takes up a thing. `outward` in the hall returns to Afterword.
+- **Tip** the device away from how you have been holding it to look closer:
+  the neighbour lines become a detail (lamp `glowing`, stair `cellar`). The
+  rest pose adapts within a few seconds, so any comfortable grip works.
+- **Tap** sets down the thing you hold.
+
+Each thing answers a different sensor channel, so the world doubles as a
+catalogue of candidate gestures for single-button meta-control:
+
+| Thing | Channel | Effect |
+| --- | --- | --- |
+| lamp | twist while held (gyro, screen axis) | winds it; fades over ~4 min; lights the cellar |
+| letter | twist while held; otherwise RSVP | reads and scrubs the saved Afterword note |
+| bowl | tilt relative to the pose it was taken up in | pours into the garden soil; rain refills it |
+| seed | stillness (< 0.15 rad/s) | grows seed → sprout → shoot → bud → flower while the soil is wet |
+| bell | shake or flick (> 6 rad/s) | rings; the house remembers how often |
+| stone | button hold duration | warms while held, cools when released |
+
+World state (lamp, water, soil, growth, warmth, rings) evolves while you are
+inside and persists to NVS as `aw_world`, at most once a minute and whenever a
+thing is set down or you step outward. Thresholds are first guesses to be
+tuned on `pebble-01`; the tip direction is deliberately sign-agnostic until
+the axis conventions are confirmed on hardware.
 
 USB commands `view debug`, `view telemetry` and `view afterword` switch
 between the diagnostic and reading interfaces. The existing boot-hold Wi-Fi

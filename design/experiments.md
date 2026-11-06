@@ -43,6 +43,22 @@ released-clutch gating, tap-to-click, Guest Wi-Fi coexistence, persistent
 Z/Y-inverted mapping and `22/28` gain were exercised successfully. Dragging
 and right-click remain outside the one-button M1 mapping.
 
+## Meta-control exploration — Afterword interior (v0.5.0)
+- Treat Afterword as the primary meta-control; the BLE pointer is its first
+  capability. The interior world probes which sensor channels can carry
+  simple, expressive control with one button: twist-while-held, tilt relative
+  to an adaptive rest pose, stillness, shake/flick and hold duration.
+- Grammar under test: hold + twist browses, release chooses, tap backs out of
+  a held thing, tip looks closer (tertiary detail), and leaving is a place
+  (`outward`) rather than a reserved gesture.
+- Observe on `pebble-01`: does tipping to look closer fire during ordinary
+  handling? Does a set-down tap disturb the thing it releases? Does stillness
+  growth or a shake ring happen by accident? Which channels feel intentional?
+- Host regression: `tests/world.c` walks the house, lights the lamp, pours
+  the bowl, grows the seed, warms the stone, rings the bell and checks
+  persistence. CI runs it before every firmware build and release.
+- Not yet measured on hardware; thresholds are provisional.
+
 ## P2 — Quantitative BLE HID
 - Pair to a computer as a conventional HID mouse/keyboard with no host app.
 - Measure rest jitter, unintended movement per minute, clutch latency and repeatability.
