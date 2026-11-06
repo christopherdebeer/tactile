@@ -1,6 +1,6 @@
 # Firmware — AtomS3R
 
-**Firmware 0.2.1 has been flashed and boot-tested on an AtomS3R.** It supports
+**Firmware 0.2.2 is the current AtomS3R build.** It supports
 the native USB console, LCD status screen, button state, Bosch BMI270/BMM150
 initialization, 100Hz 9-axis telemetry, captive-portal Wi-Fi provisioning and
 automatic stable HTTPS OTA with an A/B rollback-capable partition table. BLE
