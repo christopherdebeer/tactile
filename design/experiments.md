@@ -1,4 +1,31 @@
-# Experiments and acceptance
+# Current experiment — v0.7.0 direct dial
+
+The owner found v0.6 unpleasant to use. v0.7 replaces integrated rate control
+with an angle-to-speed dial and stabilises the text independently of dial centre.
+
+Host regressions cover constant held speed, slow turns, centre stop/hysteresis,
+reverse, bounded rate, pitch without navigation, stale/flat-sensor pause,
+comfortable-pose recapture, old tutorial migration, gyro prediction, angle wrap,
+bias correction and display rotation independent of dial inversion.
+
+Physical acceptance (open until tested on the active battery-powered unit):
+- Confirm clockwise-forward and counter-rotation signs, including a tilted
+  comfortable centre and quarter turns of the casing.
+- Read, stop on a word, reverse to it and hold it without managing a hidden rate.
+- Hold each dial angle for ten seconds: speed stays constant.
+- Check readability and clipping through the entire rotation; assess shimmer,
+  latency and frame rate on the actual LCD.
+- Lay flat, lift, regrip and recapture centre. No word burst or unwanted pitch
+  navigation. A flat screen should pause rather than invent an upright direction.
+- Confirm Wi-Fi OTA, provisioning and BLE diagnostic mode still operate.
+- Report whether modest sustained rotation is tiring. Do not restore linked
+  passages before the core motion is comfortable.
+
+The ±6°/8° detent, ±35° full range and ±3× maximum are experimental defaults,
+not measured ergonomic results. The previous release's hardware observations
+below do not validate v0.7. USB-only recording remains a known limitation.
+
+# Historical experiments and acceptance
 
 ## P0 — USB bootstrap and OTA
 - Flash the two AtomS3Rs over USB for the first time, give them roles pebble-01 and sphere-01.

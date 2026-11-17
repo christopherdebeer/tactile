@@ -492,6 +492,7 @@ static void sensor_loop(void *context) {
                 "\"magnetic_field_ut\":%s,"
                 "\"reader\":{\"ready\":%s,\"roll_rad\":%.6f,"
                 "\"pitch_rad\":%.6f,\"rate\":%.3f,"
+                "\"text_rotation_rad\":%.6f,\"word_index\":%d,"
                 "\"roll_active\":%s,\"roll_armed\":%s,"
                 "\"tilt_latched\":%s,"
                 "\"focused\":%s,\"tutorial_active\":%s,"
@@ -509,6 +510,7 @@ static void sensor_loop(void *context) {
                 reader.orientation_ready ? "true" : "false",
                 reader.roll_radians, reader.pitch_radians,
                 reader.rate_multiplier,
+                reader.text_rotation_radians, reader.word_index,
                 reader.roll_active ? "true" : "false",
                 reader.roll_armed ? "true" : "false",
                 reader.tilt_latched ? "true" : "false",
@@ -595,7 +597,7 @@ static void console_loop(void *context) {
         prompt_visible = false;
         line[strcspn(line, "\r\n")] = 0;
         if (!strcmp(line, "help")) {
-            puts("help | status | view reader|debug|telemetry | reader pace <150-2000> | reader invert-roll on|off | reader invert-pitch on|off | reader tutorial restart | mouse axis x|y | mouse invert-y on|off | mouse gain <horizontal> <vertical> | portal | stream on|off | mark <label> | role <name> | wifi <ssid> <password> | clearwifi | ota | reboot");
+            puts("help | status | view reader|debug|telemetry | reader pace <150-2000> | reader invert-roll on|off | reader invert-pitch on|off | reader centre | reader tutorial restart | mouse axis x|y | mouse invert-y on|off | mouse gain <horizontal> <vertical> | portal | stream on|off | mark <label> | role <name> | wifi <ssid> <password> | clearwifi | ota | reboot");
         } else if (!strcmp(line, "status")) {
             float horizontal_gain;
             float vertical_gain;
@@ -673,9 +675,10 @@ static void console_loop(void *context) {
             save_setting("reader_pitch_inv", inverted ? "1" : "0");
             printf("Reader pitch inversion %s.\n",
                    inverted ? "enabled" : "disabled");
-        } else if (!strcmp(line, "reader tutorial restart")) {
+        } else if (!strcmp(line, "reader tutorial restart") ||
+                   !strcmp(line, "reader centre")) {
             tutorial_restart_requested = true;
-            puts("Reader tutorial restart queued.");
+            puts("Dial centre capture queued.");
         } else if (!strcmp(line, "mouse axis x") ||
                    !strcmp(line, "mouse axis y")) {
             char axis = line[strlen(line) - 1];

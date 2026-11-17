@@ -9,6 +9,7 @@ typedef struct {
     char word[22];
     char after[22];
     char hint[22];
+    float text_rotation_degrees;
 } aw_frame_t;
 
 typedef enum {
@@ -28,6 +29,8 @@ typedef struct {
     float roll_radians;
     float pitch_radians;
     float rate_multiplier;
+    float text_rotation_radians;
+    int word_index;
     bool orientation_ready;
     bool roll_active;
     bool roll_armed;

@@ -15,6 +15,7 @@ namespace {
 
 M5GFX lcd;
 M5Canvas frame(&lcd);
+M5Canvas reader_canvas(&frame);
 SemaphoreHandle_t display_mutex;
 bool display_ready;
 enum class View { reader, debug, telemetry, wifi_setup };
@@ -258,6 +259,9 @@ extern "C" bool tactile_display_init(const char *role, const char *version,
     if (!frame.createSprite(128, 128)) {
         return false;
     }
+    reader_canvas.setColorDepth(16);
+    if (!reader_canvas.createSprite(128, 128)) return false;
+    reader_canvas.setPivot(64, 64);
     current_brightness = active_brightness;
     lcd.setBrightness(current_brightness);
     display_ready = true;
@@ -339,13 +343,14 @@ extern "C" void tactile_display_reader(const aw_frame_t *item) {
     }
     if (current_view != View::reader || !begin_render()) return;
     frame.fillScreen(background);
-    frame.setTextDatum(lgfx::textdatum_t::middle_center);
-    frame.setTextSize(1);
-    frame.setTextColor(teal, background);
-    frame.drawString(item->section, 64, 12);
-    frame.setTextColor(muted, background);
-    frame.drawString(item->after, 64, 92);
-    frame.drawString(item->hint, 64, 115);
+    reader_canvas.fillScreen(background);
+    reader_canvas.setTextDatum(lgfx::textdatum_t::middle_center);
+    reader_canvas.setTextSize(1);
+    reader_canvas.setTextColor(muted, background);
+    reader_canvas.drawString("v0.7 dial", 64, 28);
+    reader_canvas.drawString(item->hint, 64, 94);
+    reader_canvas.setTextColor(teal, background);
+    reader_canvas.drawString(item->after, 64, 106);
 
     int anchor = aw_fixation_index(item->word);
     size_t length = std::strlen(item->word);
@@ -355,30 +360,32 @@ extern "C" void tactile_display_reader(const aw_frame_t *item) {
     char suffix[22] = "";
     if (length) {
         std::memcpy(prefix, item->word, static_cast<size_t>(anchor));
-        prefix[anchor] = 0;
         pivot[0] = item->word[anchor];
         std::snprintf(suffix, sizeof(suffix), "%s", item->word + anchor + 1);
     }
-
-    frame.setTextSize(3);
-    if (frame.textWidth(item->word) > 108) frame.setTextSize(2);
-    if (frame.textWidth(item->word) > 108) frame.setTextSize(1);
-    int prefix_width = frame.textWidth(prefix);
-    int pivot_width = frame.textWidth(pivot);
+    // Bound both sides of the fixation anchor, not just total word width.
+    // All ink stays inside a radius of 60 px at every display angle.
+    int prefix_width = 0, pivot_width = 0;
+    for (int size = 3; size >= 1; --size) {
+        reader_canvas.setTextSize(size);
+        prefix_width = reader_canvas.textWidth(prefix);
+        pivot_width = reader_canvas.textWidth(pivot);
+        int right = reader_canvas.textWidth(suffix) + pivot_width / 2;
+        if (std::max(prefix_width + pivot_width / 2, right) <= 52) break;
+    }
     int start_x = 64 - prefix_width - pivot_width / 2;
-
-    frame.drawFastHLine(17, 31, 94, 0x31505a);
-    frame.drawFastVLine(64, 31, 5, coral);
-    frame.drawFastHLine(17, 82, 94, 0x31505a);
-    frame.drawFastVLine(64, 78, 5, coral);
-
-    frame.setTextDatum(lgfx::textdatum_t::middle_left);
-    frame.setTextColor(text, background);
-    frame.drawString(prefix, start_x, 57);
-    frame.setTextColor(coral, background);
-    frame.drawString(pivot, start_x + prefix_width, 57);
-    frame.setTextColor(text, background);
-    frame.drawString(suffix, start_x + prefix_width + pivot_width, 57);
+    reader_canvas.drawFastVLine(64, 43, 4, coral);
+    reader_canvas.drawFastVLine(64, 81, 4, coral);
+    reader_canvas.setTextDatum(lgfx::textdatum_t::middle_left);
+    reader_canvas.setTextColor(text, background);
+    reader_canvas.drawString(prefix, start_x, 64);
+    reader_canvas.setTextColor(coral, background);
+    reader_canvas.drawString(pivot, start_x + prefix_width, 64);
+    reader_canvas.setTextColor(text, background);
+    reader_canvas.drawString(suffix, start_x + prefix_width + pivot_width, 64);
+    // Composite before the single LCD transfer: no clear/redraw flicker.
+    reader_canvas.pushRotateZoomWithAA(&frame, 64, 64,
+                                      item->text_rotation_degrees, 1, 1);
     end_render();
 }
 

@@ -1,11 +1,8 @@
 # Firmware — AtomS3R
 
-**Firmware 0.6.0 is the embodied-reader prototype.** It supports
-the native USB console, LCD status screen, button state, Bosch BMI270/BMM150
-initialization, 100Hz 9-axis telemetry, captive-portal Wi-Fi provisioning and
-automatic stable HTTPS OTA with an A/B rollback-capable partition table. It
-also advertises the experimental standard BLE gyro mouse on `pebble-01`;
-capacitive Trill, pressure and haptics are not implemented yet.
+**Firmware 0.7.0 is the direct-dial reader experiment.** It retains native USB,
+100Hz sensor acquisition, captive Wi-Fi setup, BLE mouse diagnostics and stable
+HTTPS A/B OTA. No additional hardware sensors or haptics are required.
 
 ## Build and first USB flash
 
@@ -48,66 +45,41 @@ spaces. Passwords remain in local NVS and are never printed by the firmware.
 The stable JSONL contract and quality flags are documented in
 `protocol/telemetry.md`.
 
-## Embodied reader, button and display
+## Direct dial, button and display
 
-- During the first five seconds after boot, hold for two seconds to start
-  Wi-Fi setup. The display shows the `tactile-<device-id>` network and a new
-  random password for that boot.
-- During ordinary use, the display is a one-word-at-a-time narrative aligned
-  around a fixed red recognition letter and fixation ticks. A clockwise roll
-  displacement continuously increases the retained pace while held;
-  counter-clockwise continuously decreases it through pause and then reverse.
-  Returning upright freezes the selected pace. Pause for 400 ms to focus a
-  word. Tilt the top edge away from the reader to enter a linked word and
-  toward the reader to return to its parent.
-- On first use, hold the display in a comfortable reading pose until it
-  captures neutral. The tutorial then teaches faster, reverse, forward
-  recovery, pause, focus, enter and exit. Pace lessons ignore the wrong
-  direction, freeze at their proof threshold, and ask for an upright return.
-  Pause cannot advance to focus until both roll and pitch are neutral. Tutorial
-  completion persists; `reader tutorial restart` clears it and starts again.
-- The mechanical button is behind the LCD and is intentionally unused by the
-  reader because a hand pressing it hides the active word. The existing BLE
-  mouse remains an experimental module but is not entered from the narrative.
-- Join that network from a phone or computer. The captive portal should open
-  automatically; otherwise browse to `http://192.168.4.1`.
-- Select a scanned network or type its SSID, enter its password, and save. The
-  list excludes detected Enterprise and other unsupported networks; selecting
-  one manually is rejected when it was seen in the scan. The device stores
-  accepted credentials in NVS and restarts.
+Hold the display comfortably upright and still for 500 ms to capture the dial
+centre. Clockwise displacement reads forward; anticlockwise reads backward;
+centre pauses. Angle sets signed rate directly, with no accumulated acceleration.
+The detent stops inside 6° and releases beyond 8°. A quadratic response reaches
+3× at 35° in either direction; `reader pace <150-2000>` sets base ms/word.
+There are no pitch commands, links, focus dwell or mandatory tutorial.
 
-The equivalent USB commands are `view reader`, `view debug`, `view telemetry`,
-and `portal`.
-Reader tuning commands are `reader pace <150-2000>`,
-`reader invert-roll on|off`, and `reader invert-pitch on|off`; values persist
-in NVS. `reader tutorial restart` replays the first-use capability gate.
-Mouse tuning commands are `mouse axis x|y`, `mouse invert-y on|off`, and
-`mouse gain <horizontal> <vertical>`; values persist in NVS. The
-hardware-tested defaults are Z-axis horizontal rotation, inverted Y-axis
-vertical rotation, and gains `22/28`.
-The setup screen remains visible until credentials are saved and the device
-restarts. If association fails afterward, the USB log includes the numeric and
-named Wi-Fi disconnect reason; the diagnostic screen remains `WIFI OFF`.
+The reader uses one looping passage. Lay flat then lift and settle to recapture
+centre without losing the word. `reader centre` and the legacy
+`reader tutorial restart` also recapture. Stored v0.6 tutorial completion is
+ignored; no settings or notes are erased. `reader invert-roll on|off` changes
+the dial direction only, never the text's upright direction. Pitch inversion
+is retained for diagnostic compatibility but has no interaction effect.
 
-The sensor loop remains 100Hz and supplies the reader at 50Hz. Rendering uses
-a 16-bit off-screen frame buffer so a completed frame is transferred at once
-without visible clear/redraw flicker. The reader redraws when its word or
-coarsely quantized motion state changes, with a one-second keepalive. The
-backlight starts below half brightness, dims after 30 seconds without a user
-or radio-state event, and turns off after two minutes; connection events wake
-it. Wi-Fi setup keeps the screen awake.
+Gyro prediction follows screen roll and gravity corrects drift. The same
+estimate drives the dial and an independent absolute text counter-rotation.
+Strong acceleration, missing samples and a nearly horizontal display pause
+reading. Gravity cannot identify a viewer or distinguish a face-down screen
+from a face-up one; this experiment assumes the screen faces its user.
 
-The reader derives absolute screen roll and top-edge pitch from the BMI270
-accelerometer, relative to a comfortable pose captured after 400 ms of
-stillness. A deliberate screen-plane rotation engages the analog pace control:
-roughly 5° is neutral, about 30° reaches full input, and the retained signed
-rate is limited to −2× through +4×. Gyro magnitude suppresses focus while the
-hand is still moving and distinguishes a roll gesture from pickup or depth
-tilt. Enter/exit require about 18° for 300 ms and must return within about 7°
-of neutral before another depth gesture.
-The experimental cursor continues to use only the BMI270 gyroscope. The
-BMM150 remains available in the 100Hz telemetry stream but is not fused into
-either interaction.
+The one word, fixed recognition anchor and signed rate are drawn into a second
+128×128 RGB565 canvas. Antialiased rotation composites into the existing frame
+before one LCD transfer. Text is inset to avoid clipping during rotation.
+Quarter-degree angle changes request redraws; input is nominally 50Hz and actual
+display latency/frame rate still need physical measurement.
+
+The boot-time two-second button hold in the first five seconds still opens
+Wi-Fi setup. Normal reading does not use the screen-button. USB `view debug`
+and `view telemetry` expose the existing BLE mouse experiment. The sensor loop
+continues at 100Hz; USB `stream on` includes dial, text rotation and word index.
+
+Backlight dimming still follows frame/radio activity: 30 seconds to dim and
+120 seconds to turn off. This is not a full battery power-management policy.
 
 ## OTA workflow
 

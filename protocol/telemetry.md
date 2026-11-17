@@ -27,7 +27,7 @@ Fields:
 - `angular_velocity_rps`: x/y/z angular velocity in radians per second.
 - `magnetic_field_ut`: compensated x/y/z magnetic field in microtesla, or
   `null` when the BMM150 is unavailable.
-- `reader`: optional embodied-reader state, present in firmware 0.6.0 and
+- `reader`: optional reader state, present in firmware 0.6.0 and
   later:
   - `ready`: a stable reading pose has been captured.
   - `roll_rad`, `pitch_rad`: filtered screen-space angles relative to that
@@ -67,3 +67,14 @@ records to those produced during capture.
 
 Schema additions remain optional within version 1. Removing fields, changing
 units or changing field meaning requires a new `schema_version`.
+
+## v0.7 direct-dial interpretation
+
+`rate` is now the direct signed angle-to-speed result, rather than retained
+speed. `roll_active` means outside the pause detent; `roll_armed` follows
+orientation readiness. Focus/tilt flags remain false and tutorial is complete.
+Firmware version distinguishes this experiment from the v0.6 recogniser.
+Additional optional fields are `text_rotation_rad` (absolute counter-rotation,
+independent of neutral and inversion) and `word_index` (index in the fixed
+25-word passage). Raw acquisition and the existing button replay are unchanged.
+The current replay CLI still replays button transitions, not the dial engine.

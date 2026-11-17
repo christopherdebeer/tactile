@@ -10,14 +10,14 @@ USB/BLE diagnostic telemetry forms a **parallel** observation stream for session
 
 Management (device identity, Wi-Fi, OTA, rollback, configuration) is separate from latency-sensitive HID. Neither Wi-Fi nor Parc is needed for ordinary input.
 
-The v0.6 interaction is an on-device embodied reader rather than a menu.
-Gravity establishes roll and pitch relative to a settled reading pose; gyro
-motion gates intentional roll, focus and depth gestures. Roll continuously
-adjusts a retained signed RSVP rate, pause focuses the current word, and pitch
-enters or exits linked passages. The mechanical screen-button is reserved for
-recoverable boot-time provisioning because pressing it obscures the display.
-A persisted first-use tutorial acts as a capability gate and exposes its state
-in the observation stream.
+The v0.7 experiment isolates a direct signed speed dial. The input task owns
+reader state, estimates absolute screen roll with gyro prediction plus gravity
+correction, and captures a separate comfortable neutral pose after settling.
+Absolute roll drives display counter-rotation; roll relative to neutral drives
+reading speed. Centre pauses with hysteresis. There are no depth gestures or
+capability gates in this experiment. A short fixed passage makes handling
+comparable across sessions. The prior narrative implementation remains in Git
+history and is deliberately not expanded until handling proves pleasant.
 
 ## Reuse
 
